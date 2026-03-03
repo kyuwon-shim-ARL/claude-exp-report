@@ -1,0 +1,11 @@
+{
+  "name": "exp-report",
+  "description": "3-Tier experiment synthesis report generator from MANIFEST.yaml with parallel agents, designer review, and auto HTML+PDF conversion",
+  "version": "1.0.0",
+  "author": {
+    "name": "kyuwon-shim-ARL"
+  },
+  "keywords": ["experiment", "report", "synthesis", "3-tier", "manifest", "html", "pdf"],
+  "skills": "./skills/",
+  "license": "MIT"
+}

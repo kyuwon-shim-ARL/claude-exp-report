@@ -1,0 +1,557 @@
+---
+name: experiment-report
+description: Generate 3-Tier synthesis report from MANIFEST.yaml experiments. Activate when user mentions "experiment report", "exp-report", "synthesis report", "3-tier report", "통합 보고서", "실험 보고서", "종합 보고서", or requests report generation after experiment finalization.
+---
+
+# 3-Tier Experiment Synthesis Report
+
+## The Insight
+
+Experiment-based analysis projects accumulate results across many experiments (E001, E002, ...) tracked in MANIFEST.yaml. Stakeholders need different levels of detail: executives want decisions (Tier 1), scientists want evidence narratives (Tier 2), and reviewers want technical specs (Tier 3). This skill generates a 3-Tier synthesis report from all `status: final` experiments, using parallel agents for each tier, then converts to HTML+PDF.
+
+The 3-Tier structure eliminates redundancy (where the same experiment listing appears across multiple parts) by organizing information by *audience need*, not by *experiment sequence*.
+
+## Recognition Pattern
+
+- "통합 보고서 만들어줘" / "종합 보고서" → this skill
+- "experiment report" / "exp-report" / "synthesis report" → this skill
+- "3-tier report" / "실험 보고서" → this skill
+- User requests report generation after experiments are finalized
+- Explicit command: `/exp-report:exp-report`
+
+## Prerequisites
+
+1. **MANIFEST.yaml** must exist with experiment entries having `status: final`
+2. At least 3 final experiments (otherwise a simple summary suffices)
+3. Each experiment should have `description`, `findings`, and `path` fields
+4. Figure files should exist at `{experiment.path}/figures/*.png`
+
+## Lifecycle Position
+
+This skill fits into experiment-based workflows after experiments are finalized:
+
+```
+experiment init (once)
+    ↓
+experiment start → plan → execute → finalize (per experiment)
+    ↓
+/exp-report:exp-report  ← THIS SKILL (synthesizes all final experiments)
+    ↓
+bundle / share deliverables
+```
+
+## Workflow (7 Phases)
+
+### Phase 0: Pre-flight
+
+1. **Locate MANIFEST.yaml**: Search in order: `outputs/MANIFEST.yaml` → `MANIFEST.yaml` → prompt user
+2. **Filter experiments**: Extract only `status: final` entries. Warn if fewer than 3.
+3. **Build figure registry**: For each final experiment, glob `{exp.path}/figures/*.png` to build a map of available figures.
+4. **Auto-detect F-number**: Scan MANIFEST for existing `f###` entries (case-insensitive). Next number = max + 1. Format as `F{NNN}` (e.g., F004).
+5. **Check conversion scripts**: Look for `scripts/md_to_html.py` and `scripts/md_to_pdf.py`. If missing, generate them from embedded templates in Phase 5.
+6. **Create output directory**: `data/F{NNN}/`
+
+### Phase 1: Question Discovery (hybrid)
+
+**Auto-derive candidate questions from MANIFEST metadata:**
+
+Cluster the `description` and `findings` fields of all final experiments into 4-8 candidate questions using these heuristic categories:
+
+| Category | Heuristic | Example Question |
+|----------|-----------|------------------|
+| Pipeline validation | Experiments with accuracy/performance metrics | "Does the pipeline work?" |
+| Mechanism / causality | Experiments with correlation/mediation analysis | "Why does it work?" |
+| Reliability | Experiments with CI, bootstrap, cross-validation | "How reliable are the results?" |
+| Methodology comparison | Experiments comparing approaches (vs, comparison) | "Which method is best?" |
+| Statistical rigor | Experiments with power analysis, sample size | "Is the study adequately powered?" |
+| Domain decomposition | Experiments with sub-class/sub-target analysis | "Are classes internally coherent?" |
+| Scalability / generalization | Experiments with cross-condition validation | "Does it generalize?" |
+| Dose-response | Experiments with concentration/dose analysis | "Does concentration matter?" |
+
+**Present to user via AskUserQuestion:**
+- Show auto-derived questions (4-8)
+- Let user confirm, edit, reorder, or add custom questions
+- Each question should be a single sentence ending with "?"
+
+### Phase 2: Decision Table Draft (lead agent, sequential)
+
+For each confirmed question, extract an actionable decision:
+
+```markdown
+| Decision | Judgment | Evidence | Key Numbers |
+|----------|----------|----------|-------------|
+| D1: [topic] | [one-sentence verdict] | [which experiments support this] | [2-4 key metrics] |
+```
+
+**Rules:**
+- Every number must trace back to a MANIFEST `findings` field
+- Judgments use definitive language: "confirmed", "not supported", "conditional on..."
+- Evidence cites experiment IDs (E001, E012, etc.)
+
+### Phase 3: Parallel Tier Generation (3 agents)
+
+Spawn 3 parallel agents. Use the Agent tool with `subagent_type="general-purpose"`:
+
+#### Agent 1: Tier 1 — Decision Brief (sonnet, ~20-30 lines)
+
+**Prompt template:**
+```
+You are writing Tier 1 (Decision Brief) of a 3-Tier experiment synthesis report.
+
+Input: MANIFEST.yaml final experiments, Decision Table from Phase 2.
+
+Output file: tier1_decision_brief.md
+
+Structure:
+1. Title line with version, date, experiment count
+2. Executive Summary (1 paragraph, ~5 sentences):
+   - What was done (system, method)
+   - Headline result (best metric)
+   - Key caveat (biggest limitation)
+   - Actionable next step
+3. Decision Table (from Phase 2, formatted as markdown table)
+
+Constraints:
+- NO experiment-by-experiment listing
+- NO figures (Tier 1 is text-only for quick scanning)
+- Every number must appear identically in Tier 2
+- Maximum 30 lines total
+- Follow the language of the MANIFEST content (Korean/English)
+```
+
+#### Agent 2: Tier 2 — Evidence Narrative (opus, ~100-150 lines)
+
+**Prompt template:**
+```
+You are writing Tier 2 (Evidence Narrative) of a 3-Tier experiment synthesis report.
+
+Input: MANIFEST.yaml final experiments, confirmed questions from Phase 1, figure registry.
+
+Output file: tier2_evidence_narrative.md
+
+Structure — for each question Q1..QN:
+### Q{N}: [Question text]
+**Verdict: [Bold one-sentence conclusion with key numbers in the first sentence.]**
+
+[2-3 paragraphs of evidence narrative. Conclusion-first style — start each paragraph
+with the finding, then explain methodology and context. Cite experiment IDs (E001, E012).]
+
+![Figure caption](path/to/figure.png)
+*Figure {N}. Description (experiment ID)*
+
+**Implication**: [One sentence on what this means for the project]
+
+---
+
+Constraints:
+- Exactly 1 figure per question (select most informative from registry)
+- Bold verdict opener for every question — first sentence states the conclusion
+- Every Tier 1 number must appear somewhere in Tier 2
+- Paragraphs are dense (no bullet lists in the narrative)
+- Use experiment IDs consistently (E001, not "the first experiment")
+```
+
+#### Agent 3: Tier 3 — Technical Reference (sonnet, ~60-100 lines)
+
+**Prompt template:**
+```
+You are writing Tier 3 (Technical Reference) of a 3-Tier experiment synthesis report.
+
+Input: MANIFEST.yaml final experiments, figure registry.
+
+Output file: tier3_technical_reference.md
+
+Structure (all inside a single <details> block):
+
+## Technical Reference
+<details>
+<summary>Expand: Pipeline spec, classification tables, cross-reference, figure gallery</summary>
+
+## A. Pipeline Specification
+[Exact step-by-step spec from canonical pipeline experiment, code-block format]
+
+## B. Classification Table
+[Table of classes/categories with counts and member lists]
+
+## C. Experiment Cross-Reference Matrix
+| Experiment | Status | Key Finding | Related Experiments |
+for each final experiment...
+
+## D. Figure Gallery
+[All figures from all experiments, organized by topic, with captions and experiment IDs]
+
+</details>
+
+Constraints:
+- Everything inside <details> tags for collapsibility
+- Pipeline spec in code block (not prose)
+- Cross-reference matrix must list ALL final experiments
+- Figure paths must be valid (from registry)
+- No narrative — this is reference material only
+```
+
+### Phase 4: Assembly + Verification
+
+1. **Concatenate**: Read tier1, tier2, tier3 files → assemble into `F{NNN}_report.md`
+
+   ```markdown
+   # [Project Title]: [Report Subtitle]
+   **Version**: F{NNN} v1.0 | **Date**: {today} | **Data**: {N} experiments ({range})
+
+   ---
+
+   {tier1 content — Executive Summary + Decision Table}
+
+   ---
+
+   {tier2 content — Evidence by Question}
+
+   ---
+
+   {tier3 content — Technical Reference in <details>}
+   ```
+
+2. **Cross-tier numeric verification**:
+   - Extract all numbers from Tier 1 Decision Table
+   - For each number, verify it appears in Tier 2
+   - If any Tier 1 number is missing from Tier 2, flag and fix
+
+3. **Figure path verification**:
+   - Extract all `![...](path)` references from the assembled report
+   - Check each path exists on disk
+   - Report any broken paths
+
+4. **Save all files** to `data/F{NNN}/`:
+   - `F{NNN}_report.md` (assembled)
+   - `tier1_decision_brief.md`
+   - `tier2_evidence_narrative.md`
+   - `tier3_technical_reference.md`
+
+### Phase 5: Conversion (HTML + PDF)
+
+**Check for existing scripts:**
+- If `scripts/md_to_html.py` exists → use it
+- If `scripts/md_to_pdf.py` exists → use it
+- If either is missing → generate from embedded templates below
+
+**Run conversions in parallel:**
+```bash
+python scripts/md_to_html.py data/F{NNN}/F{NNN}_report.md &
+python scripts/md_to_pdf.py data/F{NNN}/F{NNN}_report.md &
+wait
+```
+
+**Verify outputs:**
+- `F{NNN}_report.html` size > 0
+- `F{NNN}_report.pdf` size > 0
+
+#### Embedded Conversion Script Templates
+
+If `scripts/md_to_html.py` is missing, generate this generic version:
+
+```python
+#!/usr/bin/env python3
+"""Convert Markdown reports to self-contained interactive HTML.
+
+Usage:
+    python scripts/md_to_html.py report.md
+    python scripts/md_to_html.py report.md --output output.html
+"""
+import argparse, base64, re, sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+
+try:
+    import markdown
+    HAS_MARKDOWN = True
+except ImportError:
+    HAS_MARKDOWN = False
+
+CSS = """<style>
+* { box-sizing: border-box; }
+body { max-width: 900px; margin: 0 auto; padding: 2rem; font-family: system-ui, sans-serif; line-height: 1.6; color: #333; }
+h1 { border-bottom: 3px solid #2c3e50; padding-bottom: 0.5rem; color: #2c3e50; }
+h2 { color: #2c3e50; border-bottom: 1px solid #eee; margin-top: 2rem; }
+h3 { color: #34495e; margin-top: 1.5rem; }
+table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: 0.95rem; }
+th { background: #2c3e50; color: white; padding: 0.5rem; text-align: left; }
+td { border: 1px solid #ddd; padding: 0.5rem; }
+tr:nth-child(even) { background: #f9f9f9; }
+img { max-width: 100%; display: block; margin: 1rem auto; border: 1px solid #eee; border-radius: 4px; }
+details { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 4px; padding: 1rem; margin: 1rem 0; }
+summary { cursor: pointer; font-weight: bold; color: #2c3e50; }
+code { background: #f5f5f5; padding: 0.2rem 0.4rem; border-radius: 3px; font-family: monospace; font-size: 0.9em; }
+pre { background: #f5f5f5; padding: 1rem; border-radius: 4px; overflow-x: auto; }
+pre code { background: transparent; padding: 0; }
+blockquote { border-left: 4px solid #3498db; padding: 0.5rem 1rem; margin-left: 0; color: #555; background: #f8f9fa; }
+.toc { position: sticky; top: 0; background: white; border-bottom: 2px solid #eee; padding: 1rem; z-index: 100; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+.toc ul { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 1rem; }
+.toc a { color: #2c3e50; text-decoration: none; padding: 0.3rem 0.6rem; border-radius: 3px; }
+.toc a:hover { background: #ecf0f1; }
+</style>"""
+
+def img_to_b64(p):
+    try:
+        mime = {'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.gif':'image/gif','.svg':'image/svg+xml'}.get(p.suffix.lower(),'image/png')
+        return f"data:{mime};base64,{base64.b64encode(p.read_bytes()).decode()}"
+    except Exception as e:
+        print(f"Warning: {p}: {e}", file=sys.stderr); return str(p)
+
+def process_images(content, md_path):
+    def repl(m):
+        img = PROJECT_ROOT / m.group(2)
+        return f'![{m.group(1)}]({img_to_b64(img)})' if img.exists() else m.group(0)
+    return re.sub(r'!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)', repl, content)
+
+def gen_toc(content):
+    items = []
+    def add_id(m):
+        t = m.group(1); sid = re.sub(r'[\s_]+', '-', re.sub(r'[^\w\s-]', '', t.lower()))
+        items.append((sid, t)); return f'## <span id="{sid}">{t}</span>'
+    content = re.sub(r'^## (.+)$', add_id, content, flags=re.MULTILINE)
+    toc = '<div class="toc"><h2>Contents</h2><ul>' + ''.join(f'<li><a href="#{s}">{t}</a></li>' for s,t in items) + '</ul></div>' if items else ''
+    return content, toc
+
+def convert(md_path, out=None):
+    content = md_path.read_text(encoding='utf-8')
+    content = process_images(content, md_path)
+    content, toc = gen_toc(content)
+    if HAS_MARKDOWN:
+        body = markdown.Markdown(extensions=['tables','fenced_code']).convert(content)
+        body = re.sub(r'<img alt="([^"]*)" src="([^"]+)" ?/?>', r'<figure><img src="\2" alt="\1"><figcaption>\1</figcaption></figure>', body)
+    else:
+        body = content  # fallback
+    out = out or md_path.with_suffix('.html')
+    out.write_text(f'<!DOCTYPE html><html><head><meta charset="UTF-8"><title>{md_path.stem}</title>{CSS}</head><body>{toc}{body}</body></html>', encoding='utf-8')
+    return out
+
+if __name__ == '__main__':
+    ap = argparse.ArgumentParser(); ap.add_argument('input', type=Path); ap.add_argument('-o','--output', type=Path)
+    a = ap.parse_args(); o = convert(a.input, a.output); print(f"OK: {o} ({o.stat().st_size/1024:.1f} KB)")
+```
+
+If `scripts/md_to_pdf.py` is missing, generate this generic version:
+
+```python
+#!/usr/bin/env python3
+"""Convert Markdown reports to PDF using PyMuPDF Story API.
+
+Usage:
+    python scripts/md_to_pdf.py report.md
+    python scripts/md_to_pdf.py report.md --output output.pdf
+"""
+import argparse, re, sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).parent.parent.resolve()
+
+PDF_CSS = """
+body { font-family: sans-serif; font-size: 11pt; line-height: 1.5; color: #333; }
+h1 { border-bottom: 2px solid #2c3e50; padding-bottom: 8pt; color: #2c3e50; font-size: 18pt; }
+h2 { color: #2c3e50; font-size: 14pt; margin-top: 16pt; }
+h3 { color: #34495e; font-size: 12pt; }
+table { border-collapse: collapse; width: 100%; font-size: 9pt; margin: 12pt 0; }
+th { background: #2c3e50; color: white; padding: 6pt 8pt; text-align: left; }
+td { border: 1px solid #ddd; padding: 4pt 8pt; }
+img { max-width: 80%; display: block; margin: 12pt auto; }
+pre { background: #f5f5f5; border: 1px solid #ddd; padding: 8pt; font-family: monospace; font-size: 8pt; }
+code { background: #f5f5f5; padding: 2pt 4pt; font-family: monospace; font-size: 9pt; }
+pre code { background: none; padding: 0; }
+blockquote { border-left: 3pt solid #2c3e50; padding-left: 12pt; color: #555; font-style: italic; }
+ul, ol { margin: 8pt 0; padding-left: 20pt; }
+"""
+
+def md_to_html(md_text):
+    try:
+        import markdown
+        html = markdown.Markdown(extensions=['tables','fenced_code']).convert(md_text)
+    except ImportError:
+        html = md_text
+        html = re.sub(r'^### (.+)$', r'<h3>\1</h3>', html, flags=re.MULTILINE)
+        html = re.sub(r'^## (.+)$', r'<h2>\1</h2>', html, flags=re.MULTILINE)
+        html = re.sub(r'^# (.+)$', r'<h1>\1</h1>', html, flags=re.MULTILINE)
+        html = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', html)
+    def fix_img(m):
+        alt, src = m.group(1), m.group(2)
+        if src.startswith(('http','data:')): return f'<img src="{src}" alt="{alt}"/>'
+        p = (PROJECT_ROOT / src).resolve()
+        return f'<img src="file://{p}" alt="{alt}"/>' if p.exists() else f'<img src="{src}" alt="{alt}"/>'
+    html = re.sub(r'!\[([^\]]*)\]\(([^)]+)\)', fix_img, html)
+    html = re.sub(r'<img([^>]*)src="([^"]+)"', lambda m: m.group(0) if m.group(2).startswith(('http','file://','data:')) else m.group(0).replace(f'src="{m.group(2)}"', f'src="file://{(PROJECT_ROOT/m.group(2)).resolve()}"') if (PROJECT_ROOT/m.group(2)).resolve().exists() else m.group(0), html)
+    return html
+
+def generate_pdf(md_path, output_path):
+    import fitz
+    body = md_to_html(md_path.read_text(encoding='utf-8'))
+    doc = f'<!DOCTYPE html><html><head><meta charset="UTF-8"><style>{PDF_CSS}</style></head><body>{body}</body></html>'
+    story = fitz.Story(html=doc)
+    writer = fitz.DocumentWriter(str(output_path))
+    pw, ph, m = 595, 842, 72
+    pages = 0; more = True
+    while more:
+        pages += 1; dev = writer.begin_page(fitz.Rect(0,0,pw,ph))
+        more, _ = story.place(fitz.Rect(m,m,pw-m,ph-m)); story.draw(dev); writer.end_page()
+    writer.close()
+    print(f"OK: {output_path} ({output_path.stat().st_size/1024:.1f} KB, {pages} pages)")
+
+if __name__ == '__main__':
+    ap = argparse.ArgumentParser(); ap.add_argument('input', type=Path); ap.add_argument('-o','--output', type=Path)
+    a = ap.parse_args(); i = Path(a.input).resolve()
+    if not i.exists(): print(f"Error: {i}", file=sys.stderr); sys.exit(1)
+    o = Path(a.output).resolve() if a.output else i.with_suffix('.pdf'); o.parent.mkdir(parents=True, exist_ok=True)
+    generate_pdf(i, o)
+```
+
+### Phase 5.5: Designer Review (automatic readability pass)
+
+After HTML conversion, automatically invoke an agent to critique and improve readability. The designer **does not change content** — only CSS, layout, and visual hierarchy.
+
+**Invoke designer agent:**
+```
+Agent(subagent_type="general-purpose", model="sonnet", prompt="
+You are a UI/UX designer reviewing an HTML report for readability and visual design.
+DO NOT change any text content, numbers, or figures. Only improve CSS and HTML structure.
+
+Input: data/F{NNN}/F{NNN}_report.html
+
+Review and apply fixes for these 4 areas:
+
+1. TYPOGRAPHY
+   - Font stack (system-ui with good fallbacks)
+   - Line-height >= 1.6 for body, tighter for headings
+   - Font-size hierarchy: h1 > h2 > h3 clearly distinct
+   - Paragraph max-width ~70ch for optimal readability
+   - Bold verdict openers should visually pop (color accent or left border)
+
+2. TABLE READABILITY
+   - Decision Table: alternate row colors, sticky header, adequate cell padding
+   - Highlight key numbers with subtle background (e.g., metrics in bold)
+   - Compact font-size for tables (0.9rem) with enough padding
+   - Horizontal scroll wrapper for wide tables on mobile
+
+3. RESPONSIVE LAYOUT
+   - Mobile breakpoint at 768px
+   - Images scale to 100% on mobile
+   - TOC switches from horizontal flex to vertical stack on mobile
+   - Tables get horizontal scroll on narrow screens
+   - Adequate touch targets for <details> summaries
+
+4. FIGURE GALLERY
+   - Figures centered with max-width 85%
+   - Captions: italic, smaller font, centered below figure
+   - Consistent spacing between figure and surrounding text
+   - Click-to-zoom CSS (optional: use <dialog> or transform:scale on click)
+
+Output: The modified HTML file content with improved CSS.
+Write the result back to data/F{NNN}/F{NNN}_report.html.
+")
+```
+
+**If oh-my-claudecode is installed**, prefer using `subagent_type="oh-my-claudecode:designer"` instead for a more specialized design review.
+
+**After designer review, re-verify:**
+- HTML file size > 0
+- Content unchanged (spot-check: Decision Table numbers match Tier 1)
+
+### Phase 6: Bookkeeping
+
+1. **Append to MANIFEST.yaml:**
+   ```yaml
+   f{nnn}:
+     path: data/F{NNN}/
+     script: "scientist agents (3 parallel: sonnet x2 + opus x1)"
+     params:
+       structure: "3-Tier (Decision Brief + Evidence Narrative + Technical Reference)"
+       source: "MANIFEST final experiments, restructured"
+     outputs:
+       - data/F{NNN}/F{NNN}_report.md
+       - data/F{NNN}/F{NNN}_report.html
+       - data/F{NNN}/F{NNN}_report.pdf
+       - data/F{NNN}/tier1_decision_brief.md
+       - data/F{NNN}/tier2_evidence_narrative.md
+       - data/F{NNN}/tier3_technical_reference.md
+     status: final
+     description: "F{NNN} Integrated Report: 3-Tier synthesis of {N} experiments"
+     findings: "[auto-filled from Tier 1 executive summary]"
+     notes: "[HTML size, PDF size/pages, line count vs previous report]"
+   ```
+
+2. **Append to experiment-log.md** (if present):
+   ```markdown
+   ## {date}: F{NNN} generated (3-Tier Report)
+   - **Structure**: Decision Brief + Evidence Narrative + Technical Reference
+   - **Source**: {N} final experiments ({range})
+   - **Outputs**: MD + HTML + PDF
+   - **Status**: final
+   ```
+
+### Phase 7: Summary Output
+
+Print to user:
+
+```
+=== F{NNN} 3-Tier Report Generated ===
+
+Tier 1 (Decision Brief):  {lines} lines
+Tier 2 (Evidence Narrative): {lines} lines, {fig_count} figures
+Tier 3 (Technical Reference): {lines} lines
+
+Assembled: data/F{NNN}/F{NNN}_report.md ({total_lines} lines)
+HTML:      data/F{NNN}/F{NNN}_report.html ({size} KB)
+PDF:       data/F{NNN}/F{NNN}_report.pdf ({size} KB, {pages} pages)
+
+Designer:    CSS/layout review applied
+Verification: {pass/fail} — {details}
+MANIFEST:     updated
+experiment-log: updated
+```
+
+## Agent Dispatch Table
+
+| Phase | Agent | Model | Input | Output | Max Lines |
+|-------|-------|-------|-------|--------|-----------|
+| 1 | Lead (you) | — | MANIFEST findings | Candidate questions | — |
+| 2 | Lead (you) | — | Confirmed questions + MANIFEST | Decision table | 10-15 |
+| 3a | agent-1 | sonnet | Decision table | tier1_decision_brief.md | 20-30 |
+| 3b | agent-2 | opus | Questions + MANIFEST + figures | tier2_evidence_narrative.md | 100-150 |
+| 3c | agent-3 | sonnet | MANIFEST + figures | tier3_technical_reference.md | 60-100 |
+| 4 | Lead (you) | — | 3 tier files | F{NNN}_report.md | — |
+| 5 | Bash (parallel) | — | MD file | HTML + PDF | — |
+| 5.5 | designer | sonnet | HTML file | Improved HTML (CSS/layout only) | — |
+
+## Numeric Verification Protocol
+
+After assembly, run this verification:
+
+1. **Extract Tier 1 numbers**: Parse Decision Table cells for all numeric patterns (percentages, decimals, integers, p-values)
+2. **Search Tier 2**: For each Tier 1 number, verify it appears at least once in Tier 2 text
+3. **Cross-check MANIFEST**: For each number in Tier 1, verify it traces to a MANIFEST `findings` field
+4. **Report**: List any orphaned numbers (in Tier 1 but not in Tier 2 or MANIFEST)
+
+If verification fails, patch Tier 2 to include missing numbers before proceeding to Phase 5.
+
+## Anti-Patterns
+
+| Anti-Pattern | Why It's Bad | Correct Approach |
+|-------------|--------------|------------------|
+| Listing experiments sequentially in Tier 1 | Redundant with Tier 3; Tier 1 is for decisions | Organize by decision/question, not by experiment |
+| Hallucinated numbers | Numbers not in MANIFEST are fabricated | Every number must trace to MANIFEST `findings` |
+| Skipping verification | Numeric inconsistencies across tiers | Always run Phase 4 verification |
+| Using opus for all tiers | Wasteful; Tiers 1 and 3 are mechanical formatting | Opus only for Tier 2 (cross-experiment synthesis) |
+| Hardcoding project-specific terms | Makes skill non-reusable | Use MANIFEST content as-is; no hardcoded drug names, class names, etc. |
+| Generating figures in the report | Report synthesizes existing figures, not new ones | Select from figure registry only |
+| Skipping user confirmation of questions | May generate irrelevant questions | Always present questions via AskUserQuestion |
+
+## Verification Checklist
+
+Before declaring completion, verify:
+
+- [ ] All Tier 1 Decision Table numbers appear in Tier 2
+- [ ] All figure paths in the report exist on disk
+- [ ] Tier 3 cross-reference matrix lists ALL final experiments
+- [ ] HTML file size > 0 bytes
+- [ ] PDF file size > 0 bytes
+- [ ] MANIFEST.yaml updated with F{NNN} entry
+- [ ] experiment-log.md updated (if present)
+- [ ] No experiment with `status: experimental` or `status: deprecated` is cited
