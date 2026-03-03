@@ -7,5 +7,6 @@
   },
   "keywords": ["experiment", "report", "synthesis", "3-tier", "manifest", "html", "pdf"],
   "skills": "./skills/",
+  "commands": "./commands/",
   "license": "MIT"
 }

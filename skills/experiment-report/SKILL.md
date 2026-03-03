@@ -45,8 +45,8 @@ bundle / share deliverables
 ### Phase 0: Pre-flight
 
 1. **Locate MANIFEST.yaml**: Search in order: `outputs/MANIFEST.yaml` → `MANIFEST.yaml` → prompt user
-2. **Filter experiments**: Extract only `status: final` entries. Warn if fewer than 3.
-3. **Build figure registry**: For each final experiment, glob `{exp.path}/figures/*.png` to build a map of available figures.
+2. **Filter experiments**: Extract only `status: final` entries. **Exclude synthesis/report entries** (keys matching `/^f\d+/i` such as f001, f002) — these are reports, not source experiments. Warn if fewer than 3 source experiments remain.
+3. **Build figure registry**: For each final experiment, glob `{exp.path}/figures/*.png` to build a map of available figures. **If an experiment has zero figures**, record it as `figures: []` and log a note — do not fail. Tier 2 should skip figure embedding for that question if no relevant figure exists.
 4. **Auto-detect F-number**: Scan MANIFEST for existing `f###` entries (case-insensitive). Next number = max + 1. Format as `F{NNN}` (e.g., F004).
 5. **Check conversion scripts**: Look for `scripts/md_to_html.py` and `scripts/md_to_pdf.py`. If missing, generate them from embedded templates in Phase 5.
 6. **Create output directory**: `data/F{NNN}/`
@@ -66,11 +66,12 @@ Cluster the `description` and `findings` fields of all final experiments into 4-
 | Statistical rigor | Experiments with power analysis, sample size | "Is the study adequately powered?" |
 | Domain decomposition | Experiments with sub-class/sub-target analysis | "Are classes internally coherent?" |
 | Scalability / generalization | Experiments with cross-condition validation | "Does it generalize?" |
-| Dose-response | Experiments with concentration/dose analysis | "Does concentration matter?" |
+| Quantitative relationship | Experiments with continuous variable analysis (concentration, dose, time) | "Does the quantitative factor matter?" |
 
-**Present to user via AskUserQuestion:**
-- Show auto-derived questions (4-8)
-- Let user confirm, edit, reorder, or add custom questions
+**Present candidate questions to the user:**
+- Print the auto-derived questions (4-8) as a numbered list
+- Ask the user to confirm, edit, reorder, or add custom questions
+- Wait for user response before proceeding
 - Each question should be a single sentence ending with "?"
 
 ### Phase 2: Decision Table Draft (lead agent, sequential)
@@ -100,7 +101,7 @@ You are writing Tier 1 (Decision Brief) of a 3-Tier experiment synthesis report.
 
 Input: MANIFEST.yaml final experiments, Decision Table from Phase 2.
 
-Output file: tier1_decision_brief.md
+Output file: data/F{NNN}/tier1_decision_brief.md
 
 Structure:
 1. Title line with version, date, experiment count
@@ -127,7 +128,7 @@ You are writing Tier 2 (Evidence Narrative) of a 3-Tier experiment synthesis rep
 
 Input: MANIFEST.yaml final experiments, confirmed questions from Phase 1, figure registry.
 
-Output file: tier2_evidence_narrative.md
+Output file: data/F{NNN}/tier2_evidence_narrative.md
 
 Structure — for each question Q1..QN:
 ### Q{N}: [Question text]
@@ -159,7 +160,7 @@ You are writing Tier 3 (Technical Reference) of a 3-Tier experiment synthesis re
 
 Input: MANIFEST.yaml final experiments, figure registry.
 
-Output file: tier3_technical_reference.md
+Output file: data/F{NNN}/tier3_technical_reference.md
 
 Structure (all inside a single <details> block):
 
@@ -321,9 +322,22 @@ def convert(md_path, out=None):
         body = markdown.Markdown(extensions=['tables','fenced_code']).convert(content)
         body = re.sub(r'<img alt="([^"]*)" src="([^"]+)" ?/?>', r'<figure><img src="\2" alt="\1"><figcaption>\1</figcaption></figure>', body)
     else:
-        body = content  # fallback
+        # Minimal regex-based markdown-to-HTML fallback
+        body = content
+        body = re.sub(r'^### (.+)$', r'<h3>\1</h3>', body, flags=re.MULTILINE)
+        body = re.sub(r'^## (.+)$', r'<h2>\1</h2>', body, flags=re.MULTILINE)
+        body = re.sub(r'^# (.+)$', r'<h1>\1</h1>', body, flags=re.MULTILINE)
+        body = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', body)
+        body = re.sub(r'\*(.+?)\*', r'<em>\1</em>', body)
+        body = re.sub(r'`([^`]+)`', r'<code>\1</code>', body)
+        body = re.sub(r'^\- (.+)$', r'<li>\1</li>', body, flags=re.MULTILINE)
+        body = re.sub(r'((?:<li>.*</li>\n?)+)', r'<ul>\1</ul>', body)
+        body = re.sub(r'\n{2,}', '</p><p>', body)
+        body = f'<p>{body}</p>'
+        print("Warning: 'markdown' package not installed. Using basic regex fallback.", file=sys.stderr)
+        print("Install for better output: pip install markdown", file=sys.stderr)
     out = out or md_path.with_suffix('.html')
-    out.write_text(f'<!DOCTYPE html><html><head><meta charset="UTF-8"><title>{md_path.stem}</title>{CSS}</head><body>{toc}{body}</body></html>', encoding='utf-8')
+    out.write_text(f'<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>{md_path.stem}</title>{CSS}</head><body>{toc}{body}</body></html>', encoding='utf-8')
     return out
 
 if __name__ == '__main__':
@@ -383,6 +397,10 @@ def md_to_html(md_text):
 
 def generate_pdf(md_path, output_path):
     import fitz
+    if not hasattr(fitz, 'Story'):
+        print(f"Error: PyMuPDF >= 1.21 required for Story API (found {fitz.version[0]})", file=sys.stderr)
+        print("Upgrade: pip install --upgrade PyMuPDF", file=sys.stderr)
+        sys.exit(1)
     body = md_to_html(md_path.read_text(encoding='utf-8'))
     doc = f'<!DOCTYPE html><html><head><meta charset="UTF-8"><style>{PDF_CSS}</style></head><body>{body}</body></html>'
     story = fitz.Story(html=doc)
@@ -403,55 +421,69 @@ if __name__ == '__main__':
     generate_pdf(i, o)
 ```
 
-### Phase 5.5: Designer Review (automatic readability pass)
+### Phase 5.5: Designer Review (CSS-extraction pattern)
 
-After HTML conversion, automatically invoke an agent to critique and improve readability. The designer **does not change content** — only CSS, layout, and visual hierarchy.
+After HTML conversion, automatically invoke an agent to generate CSS improvements. **Critical**: the agent must NOT read or rewrite the full HTML file (Base64-encoded images cause silent corruption when agent tools truncate long lines). Instead, use the **CSS-extraction pattern**:
+
+1. Agent reads the HTML file to understand its structure
+2. Agent outputs **ONLY a `<style>` block** with CSS improvements
+3. Lead agent injects the style block into the HTML `<head>` section
 
 **Invoke designer agent:**
 ```
 Agent(subagent_type="general-purpose", model="sonnet", prompt="
-You are a UI/UX designer reviewing an HTML report for readability and visual design.
-DO NOT change any text content, numbers, or figures. Only improve CSS and HTML structure.
+You are a CSS specialist reviewing an HTML experiment report for readability.
 
-Input: data/F{NNN}/F{NNN}_report.html
+CRITICAL CONSTRAINT: Do NOT rewrite or output the full HTML file.
+Your output must be ONLY a <style> block containing CSS improvements.
 
-Review and apply fixes for these 4 areas:
+Read the HTML file at: data/F{NNN}/F{NNN}_report.html
+Analyze its structure, then output ONLY a <style>...</style> block that improves:
 
 1. TYPOGRAPHY
-   - Font stack (system-ui with good fallbacks)
+   - Font stack: system-ui, -apple-system, sans-serif
    - Line-height >= 1.6 for body, tighter for headings
    - Font-size hierarchy: h1 > h2 > h3 clearly distinct
-   - Paragraph max-width ~70ch for optimal readability
-   - Bold verdict openers should visually pop (color accent or left border)
+   - Paragraph max-width ~70ch for readability
+   - Bold verdict openers: color accent or left border to visually pop
 
 2. TABLE READABILITY
-   - Decision Table: alternate row colors, sticky header, adequate cell padding
-   - Highlight key numbers with subtle background (e.g., metrics in bold)
-   - Compact font-size for tables (0.9rem) with enough padding
-   - Horizontal scroll wrapper for wide tables on mobile
+   - Alternate row colors, sticky header, cell padding >= 0.5rem
+   - Compact font-size (0.9rem) with adequate whitespace
+   - Horizontal scroll wrapper: .table-wrapper { overflow-x: auto; }
 
-3. RESPONSIVE LAYOUT
-   - Mobile breakpoint at 768px
-   - Images scale to 100% on mobile
-   - TOC switches from horizontal flex to vertical stack on mobile
-   - Tables get horizontal scroll on narrow screens
-   - Adequate touch targets for <details> summaries
+3. RESPONSIVE LAYOUT (@media max-width: 768px)
+   - Images: max-width 100%
+   - TOC: vertical stack instead of horizontal flex
+   - Tables: horizontal scroll on narrow screens
+   - Adequate touch targets for <details> summaries (min-height 44px)
 
-4. FIGURE GALLERY
+4. FIGURE PRESENTATION
    - Figures centered with max-width 85%
-   - Captions: italic, smaller font, centered below figure
-   - Consistent spacing between figure and surrounding text
-   - Click-to-zoom CSS (optional: use <dialog> or transform:scale on click)
+   - Captions: italic, smaller font (0.85em), centered below figure
+   - Consistent spacing (margin: 1.5rem auto)
 
-Output: The modified HTML file content with improved CSS.
-Write the result back to data/F{NNN}/F{NNN}_report.html.
+Output format — ONLY this, nothing else:
+<style>
+/* Designer review CSS improvements */
+...your CSS here...
+</style>
 ")
 ```
 
-**If oh-my-claudecode is installed**, prefer using `subagent_type="oh-my-claudecode:designer"` instead for a more specialized design review.
+**After receiving CSS output, inject it:**
+```python
+# Read the HTML, inject the new <style> block before </head>
+html = Path('data/F{NNN}/F{NNN}_report.html').read_text()
+html = html.replace('</head>', f'{designer_css}\n</head>')
+Path('data/F{NNN}/F{NNN}_report.html').write_text(html)
+```
+
+**If oh-my-claudecode is installed**, prefer `subagent_type="oh-my-claudecode:designer"` with the same CSS-only constraint.
 
 **After designer review, re-verify:**
 - HTML file size > 0
+- All Base64 images still intact (spot-check file size is within 5% of pre-review size)
 - Content unchanged (spot-check: Decision Table numbers match Tier 1)
 
 ### Phase 6: Bookkeeping
@@ -524,8 +556,12 @@ experiment-log: updated
 
 After assembly, run this verification:
 
-1. **Extract Tier 1 numbers**: Parse Decision Table cells for all numeric patterns (percentages, decimals, integers, p-values)
-2. **Search Tier 2**: For each Tier 1 number, verify it appears at least once in Tier 2 text
+1. **Extract Tier 1 numbers**: Parse Decision Table cells using this regex pattern:
+   ```
+   \b\d+\.?\d*%?\b
+   ```
+   This matches: `90.5`, `86%`, `0.45`, `13`, `p<0.05`. **Exclude** from matching: dates (2024-01-15), figure numbers (Figure 1), section numbers (Q1, D1), and experiment IDs (E001).
+2. **Search Tier 2**: For each extracted Tier 1 number, verify it appears at least once in Tier 2 text (exact string match)
 3. **Cross-check MANIFEST**: For each number in Tier 1, verify it traces to a MANIFEST `findings` field
 4. **Report**: List any orphaned numbers (in Tier 1 but not in Tier 2 or MANIFEST)
 
@@ -541,7 +577,12 @@ If verification fails, patch Tier 2 to include missing numbers before proceeding
 | Using opus for all tiers | Wasteful; Tiers 1 and 3 are mechanical formatting | Opus only for Tier 2 (cross-experiment synthesis) |
 | Hardcoding project-specific terms | Makes skill non-reusable | Use MANIFEST content as-is; no hardcoded drug names, class names, etc. |
 | Generating figures in the report | Report synthesizes existing figures, not new ones | Select from figure registry only |
-| Skipping user confirmation of questions | May generate irrelevant questions | Always present questions via AskUserQuestion |
+| Skipping user confirmation of questions | May generate irrelevant questions | Always present questions and wait for user confirmation |
+| Including non-final experiments | Draft/deprecated experiments pollute the report | Phase 0 must filter `status: final` only |
+| Including synthesis entries (f###) | Reports referencing other reports create circular dependencies | Phase 0 must exclude keys matching `/^f\d+/i` |
+| Figure numbering mismatches across tiers | Tier 2 says "Figure 3" but Tier 3 gallery has different numbering | Use consistent figure IDs tied to experiment IDs (e.g., "E005-Fig1") |
+| Using stale MANIFEST data | MANIFEST may have changed since last read | Re-read MANIFEST at Phase 0 start; do not cache across sessions |
+| Designer agent rewriting full HTML | Base64-encoded images get silently corrupted by line truncation | Use CSS-extraction pattern: agent outputs `<style>` block only |
 
 ## Verification Checklist
 
