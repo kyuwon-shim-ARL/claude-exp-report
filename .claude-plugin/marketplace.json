@@ -1,15 +1,15 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "exp-report",
-  "description": "3-Tier experiment synthesis report from MANIFEST.yaml experiments",
+  "description": "Multi-tier experiment synthesis report from MANIFEST.yaml experiments",
   "owner": {
     "name": "kyuwon-shim-ARL"
   },
   "plugins": [
     {
       "name": "exp-report",
-      "description": "Generate 3-Tier synthesis reports (Decision Brief + Evidence Narrative + Technical Reference) from MANIFEST.yaml experiments with parallel agents, designer review, and auto HTML+PDF conversion. Includes /exp-report command.",
-      "version": "1.4.0",
+      "description": "Generate multi-tier synthesis reports (Plain Language + Decision Brief + Evidence Narrative + Technical Reference) from MANIFEST.yaml experiments with parallel agents, designer review, and auto HTML+PDF conversion. Includes /exp-report command.",
+      "version": "1.5.0",
       "author": {
         "name": "kyuwon-shim-ARL"
       },
@@ -20,7 +20,7 @@
         "experiment",
         "report",
         "synthesis",
-        "3-tier",
+        "multi-tier",
         "manifest",
         "research",
         "html",

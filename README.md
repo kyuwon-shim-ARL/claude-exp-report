@@ -1,6 +1,6 @@
 # claude-exp-report
 
-Claude Code plugin for generating 3-Tier experiment synthesis reports from MANIFEST.yaml.
+Claude Code plugin for generating multi-tier experiment synthesis reports from MANIFEST.yaml.
 
 ## Install
 
@@ -17,10 +17,11 @@ claude plugin install exp-report
 
 ## What It Does
 
-Reads your MANIFEST.yaml, filters `status: final` experiments, and generates a 3-Tier synthesis report:
+Reads your MANIFEST.yaml, filters `status: final` experiments, and generates a 4-Tier synthesis report:
 
 | Tier | Audience | Content | Lines |
 |------|----------|---------|-------|
+| **Tier 0** | Non-specialists | Plain Language Summary (jargon-free rewrite) | 20-30 |
 | **Tier 1** | Executives | Decision Brief + Decision Table | 20-30 |
 | **Tier 2** | Scientists | Evidence Narrative (conclusion-first, 1 figure per question) | 100-150 |
 | **Tier 3** | Reviewers | Technical Reference (collapsible specs, cross-reference) | 60-100 |
@@ -33,12 +34,12 @@ Outputs: Markdown + self-contained HTML + PDF.
 /exp-report:exp-report
 ```
 
-Or just say "experiment report", "synthesis report", "3-tier report", or "통합 보고서" — the skill auto-activates.
+Or just say "experiment report", "synthesis report", "실험 보고서", or "통합 보고서" — the skill auto-activates.
 
 ## Requirements
 
 - MANIFEST.yaml with `status: final` experiments (at least 3)
-- Each experiment needs: `description`, `findings`, `path`
+- Each experiment needs: `description`, `findings`, `path` (alternative field names accepted — see Phase 0 normalization)
 - Python packages: `markdown` (HTML conversion), `PyMuPDF >= 1.21` (PDF conversion, requires Story API)
 
 ## MANIFEST.yaml Format
@@ -57,10 +58,11 @@ experiments:
 
 ## Features
 
-- Hybrid question discovery (auto-suggests from metadata, user confirms)
-- Parallel tier generation (3 agents)
-- Cross-tier numeric verification (every Tier 1 number must appear in Tier 2)
-- Designer readability review on HTML output
+- MECE-validated question discovery with narrative arc ordering (Claim → Mechanism → Boundary → Practical)
+- Parallel tier generation (3+1 agents: 3 parallel + Tier 0 sequential after Tier 1)
+- Cross-tier numeric verification (Tier 1 numbers must appear in Tier 0 and Tier 2)
+- MANIFEST field normalization (`title`→`description`, `result`→`findings`, auto-derive `path`)
+- Designer readability review on HTML output (CSS-extraction pattern)
 - Auto-generates `md_to_html.py` and `md_to_pdf.py` if project lacks them
 - Updates MANIFEST.yaml and experiment-log.md automatically
 

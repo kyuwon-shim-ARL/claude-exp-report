@@ -1,23 +1,23 @@
 ---
 name: experiment-report
-description: Generate 3-Tier synthesis report from MANIFEST.yaml experiments. Activate when user mentions "experiment report", "exp-report", "synthesis report", "3-tier report", "통합 보고서", "실험 보고서", "종합 보고서", or requests report generation after experiment finalization.
+description: Generate multi-tier synthesis report from MANIFEST.yaml experiments. Activate when user mentions "experiment report", "exp-report", "synthesis report", "3-tier report", "통합 보고서", "실험 보고서", "종합 보고서", or requests report generation after experiment finalization.
 ---
 
-# 3-Tier Experiment Synthesis Report
+# Experiment Synthesis Report
 
 ## CRITICAL: Mandatory Phase Execution
 
-**You MUST execute ALL 7 phases (0→1→2→3→4→5→5.5→6→7). DO NOT stop after Phase 4.**
+**You MUST execute ALL 9 phases (0→1→2→3→4→5→6→7→8). DO NOT stop after Phase 4.**
 
-The most common failure is stopping after MD assembly (Phase 4) without running HTML/PDF conversion (Phase 5). The report is NOT complete until HTML and PDF files exist on disk. If you skip Phase 5, the user gets only raw Markdown — this defeats the purpose of the plugin.
+The most common failure is stopping after MD assembly (Phase 4) without running HTML/PDF conversion (Phase 5). The report is NOT complete until HTML and PDF files exist on disk. If you skip Phase 5, the user gets only raw Markdown — this defeats the purpose of the plugin. Phase 4 is complete ONLY when Phase 5 has been executed and `F{NNN}_report.html` exists on disk.
 
 **Checkpoint rule**: After Phase 4, explicitly print `">>> Phase 5: Converting to HTML + PDF..."` before proceeding. If conversion scripts are missing, generate them from the embedded templates below. If Python packages are missing, print clear install instructions and attempt conversion anyway.
 
 ## The Insight
 
-Experiment-based analysis projects accumulate results across many experiments (E001, E002, ...) tracked in MANIFEST.yaml. Stakeholders need different levels of detail: executives want decisions (Tier 1), scientists want evidence narratives (Tier 2), and reviewers want technical specs (Tier 3). This skill generates a 3-Tier synthesis report from all `status: final` experiments, using parallel agents for each tier, then converts to HTML+PDF.
+Experiment-based analysis projects accumulate results across many experiments (E001, E002, ...) tracked in MANIFEST.yaml. Stakeholders need different levels of detail: executives want decisions (Tier 1), scientists want evidence narratives (Tier 2), and reviewers want technical specs (Tier 3). This skill generates a multi-tier synthesis report (Tier 0: Plain Language, Tier 1: Decision Brief, Tier 2: Evidence Narrative, Tier 3: Technical Reference) from all `status: final` experiments, using parallel agents for each tier, then converts to HTML+PDF.
 
-The 3-Tier structure eliminates redundancy (where the same experiment listing appears across multiple parts) by organizing information by *audience need*, not by *experiment sequence*.
+The multi-tier structure eliminates redundancy (where the same experiment listing appears across multiple parts) by organizing information by *audience need*, not by *experiment sequence*.
 
 ## Recognition Pattern
 
@@ -31,7 +31,7 @@ The 3-Tier structure eliminates redundancy (where the same experiment listing ap
 
 1. **MANIFEST.yaml** must exist with experiment entries having `status: final`
 2. At least 3 final experiments (otherwise a simple summary suffices)
-3. Each experiment should have `description`, `findings`, and `path` fields
+3. Each experiment should have `description`, `findings`, and `path` fields (alternatives accepted — see Phase 0 normalization)
 4. Figure files should exist at `{experiment.path}/figures/*.png`
 
 ## Lifecycle Position
@@ -48,16 +48,22 @@ experiment start → plan → execute → finalize (per experiment)
 bundle / share deliverables
 ```
 
-## Workflow (7 Phases)
+## Workflow (9 Phases)
 
 ### Phase 0: Pre-flight
 
 1. **Locate MANIFEST.yaml**: Search in order: `outputs/MANIFEST.yaml` → `MANIFEST.yaml` → prompt user
 2. **Filter experiments**: Extract only `status: final` entries. **Exclude synthesis/report entries** (keys matching `/^f\d+/i` such as f001, f002) — these are reports, not source experiments. Warn if fewer than 3 source experiments remain.
-3. **Build figure registry**: For each final experiment, glob `{exp.path}/figures/*.png` to build a map of available figures. **If an experiment has zero figures**, record it as `figures: []` and log a note — do not fail. Tier 2 should skip figure embedding for that question if no relevant figure exists.
-4. **Auto-detect F-number**: Scan MANIFEST for existing `f###` entries (case-insensitive). Next number = max + 1. Format as `F{NNN}` (e.g., F004).
-5. **Check conversion scripts**: Look for `scripts/md_to_html.py` and `scripts/md_to_pdf.py`. If missing, generate them from embedded templates in Phase 5.
-6. **Create output directory**: `data/F{NNN}/`
+3. **Normalize MANIFEST fields**: Not all projects use the same field names. Apply this normalization chain before proceeding:
+   - `description` ← fall back to `title` if `description` is missing
+   - `findings` ← fall back to `result`, then `conclusion`, then `description` if `findings` is missing
+   - `path` ← if missing, derive from `outputs[0]` parent directory (e.g., `data/E001/figures/plot.png` → `data/E001/`)
+   - When an output entry is a bare filename (no path separator), resolve as `{path}/{filename}`
+   Log which fields were normalized and continue — do not fail on missing canonical field names.
+4. **Build figure registry**: For each final experiment, glob `{exp.path}/figures/*.png` to build a map of available figures. **If an experiment has zero figures**, record it as `figures: []` and log a note — do not fail. Tier 2 should skip figure embedding for that question if no relevant figure exists.
+5. **Auto-detect F-number**: Scan MANIFEST for existing `f###` entries (case-insensitive). Next number = max + 1. Format as `F{NNN}` (e.g., F004).
+6. **Check conversion scripts**: Look for `scripts/md_to_html.py` and `scripts/md_to_pdf.py`. If missing, generate them from embedded templates in Phase 5.
+7. **Create output directory**: `data/F{NNN}/`
 
 ### Phase 1: Question Discovery (hybrid)
 
@@ -120,6 +126,7 @@ Verify that answering ALL questions produces a coherent final conclusion. Draft 
 **Check 4 — Question Count**
 - Target: 4-6 questions. Fewer than 4 suggests over-merging. More than 6 suggests insufficient abstraction.
 - If >6 after heuristic derivation, look for questions that are sub-aspects of a broader question and merge them.
+- **Priority rule**: If an outlier experiment fits no existing question, exhaustiveness (Check 1) takes priority over count target. Create the extra question rather than leaving experiments unassigned. Annotate it as "Auxiliary" in the arc.
 
 **Present validated questions to the user:**
 - Print the questions as a numbered list **with the narrative arc label** (Claim / Mechanism / Boundary / Practical)
@@ -143,15 +150,19 @@ For each confirmed question, extract an actionable decision:
 - Judgments use definitive language: "confirmed", "not supported", "conditional on..."
 - Evidence cites experiment IDs (E001, E012, etc.)
 
-### Phase 3: Parallel Tier Generation (4 agents)
+### Phase 3: Tier Generation (3+1 agents)
 
-Spawn 4 parallel agents with `subagent_type="general-purpose"`:
+Spawn agents in two waves:
+- **Wave 1** (parallel): Agents 1 (Tier 1), 2 (Tier 2), 3 (Tier 3) — fire simultaneously
+- **Wave 2** (sequential): Agent 4 (Tier 0) — runs after Agent 1 completes and `tier1_decision_brief.md` exists on disk
+
+Use `subagent_type="general-purpose"` for all agents:
 
 #### Agent 1: Tier 1 — Decision Brief (sonnet, ~20-30 lines)
 
 **Prompt template:**
 ```
-You are writing Tier 1 (Decision Brief) of a 3-Tier experiment synthesis report.
+You are writing Tier 1 (Decision Brief) of a multi-tier experiment synthesis report.
 
 Input: MANIFEST.yaml final experiments, Decision Table from Phase 2.
 
@@ -178,7 +189,7 @@ Constraints:
 
 **Prompt template:**
 ```
-You are writing Tier 2 (Evidence Narrative) of a 3-Tier experiment synthesis report.
+You are writing Tier 2 (Evidence Narrative) of a multi-tier experiment synthesis report.
 
 Input: MANIFEST.yaml final experiments, confirmed questions from Phase 1 (with narrative arc labels: Claim/Mechanism/Boundary/Practical and experiment assignments), figure registry.
 
@@ -215,7 +226,7 @@ Constraints:
 
 **Prompt template:**
 ```
-You are writing Tier 3 (Technical Reference) of a 3-Tier experiment synthesis report.
+You are writing Tier 3 (Technical Reference) of a multi-tier experiment synthesis report.
 
 Input: MANIFEST.yaml final experiments, figure registry.
 
@@ -311,7 +322,8 @@ Constraints:
 2. **Cross-tier numeric verification**:
    - Extract all numbers from Tier 1 Decision Table
    - For each number, verify it appears in Tier 2
-   - If any Tier 1 number is missing from Tier 2, flag and fix
+   - For each number, verify it appears in Tier 0 (with plain-language context — e.g., "AUC 0.92" → "scored 0.92 on AUC, a measure where 1.0 is perfect")
+   - If any Tier 1 number is missing from Tier 2 or Tier 0, flag and fix
 
 3. **Figure path verification**:
    - Extract all `![...](path)` references from the assembled report
@@ -341,7 +353,7 @@ python -c "import markdown" 2>/dev/null || echo "WARNING: 'markdown' package not
 python -c "import fitz" 2>/dev/null || echo "WARNING: 'PyMuPDF' package not installed. Install with: pip install PyMuPDF"
 ```
 - If `markdown` is missing: proceed with HTML conversion anyway (script has regex fallback)
-- If `fitz` is missing: skip PDF only, print install instruction, continue to Phase 5.5
+- If `fitz` is missing: the PDF script self-aborts — no intervention needed. Always run both scripts as shown in Step 5c. Continue to Phase 6
 
 **Step 5c: Run conversions**
 ```bash
@@ -357,6 +369,7 @@ ls -la data/F{NNN}/F{NNN}_report.html data/F{NNN}/F{NNN}_report.pdf 2>&1
 - `F{NNN}_report.html` size > 0 → proceed
 - `F{NNN}_report.pdf` size > 0 → proceed
 - If HTML is missing or empty → **STOP and debug** (check script output for errors)
+- **Content-quality spot-check**: If the source MD contains pipe-table syntax (`|...|`), verify `<table>` appears in the HTML output. If not, the fallback failed to convert tables — install `markdown` package and retry.
 - If PDF is missing → log warning but continue (PDF requires PyMuPDF)
 
 #### Embedded Conversion Script Templates
@@ -435,19 +448,33 @@ def convert(md_path, out=None):
         body = markdown.Markdown(extensions=['tables','fenced_code']).convert(content)
         body = re.sub(r'<img alt="([^"]*)" src="([^"]+)" ?/?>', r'<figure><img src="\2" alt="\1"><figcaption>\1</figcaption></figure>', body)
     else:
-        # Minimal regex-based markdown-to-HTML fallback
+        # Regex-based markdown-to-HTML fallback (handles tables + code blocks)
         body = content
+        # Fenced code blocks (``` ... ```)
+        body = re.sub(r'```(\w*)\n(.*?)```', lambda m: f'<pre><code class="language-{m.group(1)}">{m.group(2).replace("<","&lt;").replace(">","&gt;")}</code></pre>', body, flags=re.DOTALL)
+        # Pipe tables
+        def table_repl(m):
+            rows = [r.strip() for r in m.group(0).strip().split('\n') if r.strip()]
+            if len(rows) < 2: return m.group(0)
+            hdr = [c.strip() for c in rows[0].strip('|').split('|')]
+            html = '<table><thead><tr>' + ''.join(f'<th>{c}</th>' for c in hdr) + '</tr></thead><tbody>'
+            for row in rows[2:]:  # skip separator row
+                cells = [c.strip() for c in row.strip('|').split('|')]
+                html += '<tr>' + ''.join(f'<td>{c}</td>' for c in cells) + '</tr>'
+            return html + '</tbody></table>'
+        body = re.sub(r'(?:^\|.+\|$\n?){2,}', table_repl, body, flags=re.MULTILINE)
         body = re.sub(r'^### (.+)$', r'<h3>\1</h3>', body, flags=re.MULTILINE)
         body = re.sub(r'^## (.+)$', r'<h2>\1</h2>', body, flags=re.MULTILINE)
         body = re.sub(r'^# (.+)$', r'<h1>\1</h1>', body, flags=re.MULTILINE)
         body = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', body)
         body = re.sub(r'\*(.+?)\*', r'<em>\1</em>', body)
         body = re.sub(r'`([^`]+)`', r'<code>\1</code>', body)
+        body = re.sub(r'^\d+\. (.+)$', r'<li>\1</li>', body, flags=re.MULTILINE)
         body = re.sub(r'^\- (.+)$', r'<li>\1</li>', body, flags=re.MULTILINE)
         body = re.sub(r'((?:<li>.*</li>\n?)+)', r'<ul>\1</ul>', body)
         body = re.sub(r'\n{2,}', '</p><p>', body)
         body = f'<p>{body}</p>'
-        print("Warning: 'markdown' package not installed. Using basic regex fallback.", file=sys.stderr)
+        print("Warning: 'markdown' package not installed. Using regex fallback.", file=sys.stderr)
         print("Install for better output: pip install markdown", file=sys.stderr)
     out = out or md_path.with_suffix('.html')
     out.write_text(f'<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>{md_path.stem}</title>{CSS}</head><body>{toc}{body}</body></html>', encoding='utf-8')
@@ -534,7 +561,7 @@ if __name__ == '__main__':
     generate_pdf(i, o)
 ```
 
-### Phase 5.5: Designer Review (CSS-extraction pattern)
+### Phase 6: Designer Review (CSS-extraction pattern)
 
 After HTML conversion, automatically invoke an agent to generate CSS improvements. **Critical**: the agent must NOT read or rewrite the full HTML file (Base64-encoded images cause silent corruption when agent tools truncate long lines). Instead, use the **CSS-extraction pattern**:
 
@@ -599,15 +626,15 @@ Path('data/F{NNN}/F{NNN}_report.html').write_text(html)
 - All Base64 images still intact (spot-check file size is within 5% of pre-review size)
 - Content unchanged (spot-check: Decision Table numbers match Tier 1)
 
-### Phase 6: Bookkeeping
+### Phase 7: Bookkeeping
 
 1. **Append to MANIFEST.yaml:**
    ```yaml
    f{nnn}:
      path: data/F{NNN}/
-     script: "scientist agents (3 parallel: sonnet x2 + opus x1)"
+     script: "scientist agents (3 parallel + 1 sequential: sonnet x3 + opus x1)"
      params:
-       structure: "3-Tier (Decision Brief + Evidence Narrative + Technical Reference)"
+       structure: "4-Tier (Plain Language + Decision Brief + Evidence Narrative + Technical Reference)"
        source: "MANIFEST final experiments, restructured"
      outputs:
        - data/F{NNN}/F{NNN}_report.md
@@ -618,21 +645,21 @@ Path('data/F{NNN}/F{NNN}_report.html').write_text(html)
        - data/F{NNN}/tier2_evidence_narrative.md
        - data/F{NNN}/tier3_technical_reference.md
      status: final
-     description: "F{NNN} Integrated Report: 3-Tier synthesis of {N} experiments"
+     description: "F{NNN} Integrated Report: 4-Tier synthesis of {N} experiments"
      findings: "[auto-filled from Tier 1 executive summary]"
      notes: "[HTML size, PDF size/pages, line count vs previous report]"
    ```
 
 2. **Append to experiment-log.md** (if present):
    ```markdown
-   ## {date}: F{NNN} generated (3-Tier Report)
-   - **Structure**: Decision Brief + Evidence Narrative + Technical Reference
+   ## {date}: F{NNN} generated (4-Tier Report)
+   - **Structure**: Plain Language + Decision Brief + Evidence Narrative + Technical Reference
    - **Source**: {N} final experiments ({range})
    - **Outputs**: MD + HTML + PDF
    - **Status**: final
    ```
 
-### Phase 7: Summary Output
+### Phase 8: Summary Output
 
 Print to user:
 
@@ -664,9 +691,12 @@ experiment-log: updated
 | 3b | agent-2 | opus | Questions + MANIFEST + figures | tier2_evidence_narrative.md | 100-150 |
 | 3c | agent-3 | sonnet | MANIFEST + figures | tier3_technical_reference.md | 60-100 |
 | 3d | agent-4 | sonnet | Tier 1 + MANIFEST descriptions | tier0_plain_language.md | 20-30 |
-| 4 | Lead (you) | — | 3 tier files | F{NNN}_report.md | — |
+| | | | *(sequential after 3a)* | | |
+| 4 | Lead (you) | — | 4 tier files | F{NNN}_report.md | — |
 | 5 | Bash (parallel) | — | MD file | HTML + PDF | — |
-| 5.5 | designer | sonnet | HTML file | Improved HTML (CSS/layout only) | — |
+| 6 | designer | sonnet | HTML file | Improved HTML (CSS/layout only) | — |
+| 7 | Lead (you) | — | All outputs | MANIFEST + log updated | — |
+| 8 | Lead (you) | — | — | Summary printed | — |
 
 ## Numeric Verification Protocol
 
@@ -678,8 +708,9 @@ After assembly, run this verification:
    ```
    This matches: `90.5`, `86%`, `0.45`, `13`, `p<0.05`. **Exclude** from matching: dates (2024-01-15), figure numbers (Figure 1), section numbers (Q1, D1), and experiment IDs (E001).
 2. **Search Tier 2**: For each extracted Tier 1 number, verify it appears at least once in Tier 2 text (exact string match)
-3. **Cross-check MANIFEST**: For each number in Tier 1, verify it traces to a MANIFEST `findings` field
-4. **Report**: List any orphaned numbers (in Tier 1 but not in Tier 2 or MANIFEST)
+3. **Search Tier 0**: For each extracted Tier 1 number, verify it appears at least once in Tier 0 text (with plain-language context around technical terms)
+4. **Cross-check MANIFEST**: For each number in Tier 1, verify it traces to a MANIFEST `findings` field (or normalized equivalent: `result`, `conclusion`)
+5. **Report**: List any orphaned numbers (in Tier 1 but not in Tier 2, Tier 0, or MANIFEST)
 
 If verification fails, patch Tier 2 to include missing numbers before proceeding to Phase 5.
 
@@ -701,14 +732,15 @@ If verification fails, patch Tier 2 to include missing numbers before proceeding
 | Flat question list without hierarchy | Readers see no logical progression; questions feel arbitrary | Order questions as narrative arc: Claim→Mechanism→Boundary→Practical |
 | Siloing statistical rigor as standalone question | Last question retroactively undermines all prior claims | Integrate CI/power into the claim or practical question |
 | Unassigned experiments | Experiments missing from all questions produce incomplete synthesis | Check exhaustiveness: every final experiment in at least one question |
-| Stopping after Phase 4 (MD only) | User gets raw Markdown without HTML/PDF — defeats the plugin purpose | MUST execute Phase 5 conversion; print checkpoint message before starting |
+| Stopping after Phase 4 (MD only) | User gets raw Markdown without HTML/PDF — defeats the plugin purpose | Phase 4 is complete ONLY when Phase 5 has executed and HTML exists on disk |
 | Designer agent rewriting full HTML | Base64-encoded images get silently corrupted by line truncation | Use CSS-extraction pattern: agent outputs `<style>` block only |
 
 ## Verification Checklist
 
-Before declaring completion, verify **ALL** of the following. **If any REQUIRED item fails, the report is NOT complete — do not print the Phase 7 summary.**
+Before declaring completion, verify **ALL** of the following. **If any REQUIRED item fails, the report is NOT complete — do not print the Phase 8 summary.**
 
 - [ ] All Tier 1 Decision Table numbers appear in Tier 2
+- [ ] All Tier 1 Decision Table numbers appear in Tier 0 (with plain-language context)
 - [ ] All figure paths in the report exist on disk
 - [ ] Tier 3 cross-reference matrix lists ALL final experiments
 - [ ] **REQUIRED**: `F{NNN}_report.html` exists and size > 0 bytes (if missing, go back to Phase 5)
@@ -717,4 +749,4 @@ Before declaring completion, verify **ALL** of the following. **If any REQUIRED 
 - [ ] experiment-log.md updated (if present)
 - [ ] No experiment with `status: experimental` or `status: deprecated` is cited
 
-**FAIL-SAFE**: If you reach Phase 7 without HTML output, STOP. Go back to Phase 5 and generate it.
+**FAIL-SAFE**: If you reach Phase 8 without HTML output, STOP. Go back to Phase 5 and generate it.

@@ -31,7 +31,7 @@ Generate a synthesis report from all `status: final` experiments in MANIFEST.yam
 ## Requirements
 
 - MANIFEST.yaml with at least 3 `status: final` experiments
-- Each experiment needs `description`, `findings`, and `path` fields
+- Each experiment needs `description`, `findings`, and `path` fields (alternatives accepted: `title`, `result`, auto-derive path)
 - Python with `markdown` package (for HTML conversion)
 - PyMuPDF >= 1.21 / `fitz` package (for PDF conversion, requires Story API)
 
@@ -50,4 +50,4 @@ data/F{NNN}/
 
 ## Invoke the Skill
 
-This command activates the `experiment-report` skill. Read the full skill documentation for details on the 7-phase workflow, agent dispatch table, and verification protocol.
+This command activates the `experiment-report` skill. Read the full skill documentation for details on the 9-phase workflow, agent dispatch table, and verification protocol.
