@@ -143,9 +143,9 @@ For each confirmed question, extract an actionable decision:
 - Judgments use definitive language: "confirmed", "not supported", "conditional on..."
 - Evidence cites experiment IDs (E001, E012, etc.)
 
-### Phase 3: Parallel Tier Generation (3 agents)
+### Phase 3: Parallel Tier Generation (4 agents)
 
-Spawn 3 parallel agents with `subagent_type="general-purpose"`:
+Spawn 4 parallel agents with `subagent_type="general-purpose"`:
 
 #### Agent 1: Tier 1 — Decision Brief (sonnet, ~20-30 lines)
 
@@ -250,13 +250,50 @@ Constraints:
 - No narrative — this is reference material only
 ```
 
+#### Agent 4: Tier 0 — Plain Language Summary (sonnet, ~20-30 lines)
+
+**Prompt template:**
+```
+You are writing Tier 0 (Plain Language Summary) of an experiment synthesis report.
+Your job is to rewrite the Decision Brief (Tier 1) so that a non-specialist can
+understand it — no jargon, no acronyms, no technical terms.
+
+Input: Tier 1 Decision Brief (tier1_decision_brief.md), MANIFEST experiment descriptions.
+
+Output file: data/F{NNN}/tier0_plain_language.md
+
+Structure:
+1. Title: "What We Found (Plain Language)"
+2. One-paragraph summary using everyday language:
+   - What the project tried to do (use analogies if helpful)
+   - The main result in plain terms (keep the same numbers)
+   - The biggest caveat in plain terms
+   - What happens next
+3. Decision Table rewritten with:
+   - Column headers simplified (e.g., "Judgment" → "What we concluded")
+   - Technical terms replaced with plain explanations
+   - Parenthetical clarifications for any unavoidable technical terms
+
+Constraints:
+- Every number from Tier 1 must appear identically in Tier 0
+- NO acronyms unless immediately defined in parentheses on first use
+- NO assuming domain knowledge — explain as if to a smart generalist
+- Keep the same structure and conclusions as Tier 1, only change the language
+- Maximum 30 lines total
+- Match the language of the MANIFEST content (Korean → Korean, English → English)
+```
+
 ### Phase 4: Assembly + Verification
 
-1. **Concatenate**: Read tier1, tier2, tier3 files → assemble into `F{NNN}_report.md`
+1. **Concatenate**: Read tier0, tier1, tier2, tier3 files → assemble into `F{NNN}_report.md`
 
    ```markdown
    # [Project Title]: [Report Subtitle]
    **Version**: F{NNN} v1.0 | **Date**: {today} | **Data**: {N} experiments ({range})
+
+   ---
+
+   {tier0 content — Plain Language Summary}
 
    ---
 
@@ -283,6 +320,7 @@ Constraints:
 
 4. **Save all files** to `data/F{NNN}/`:
    - `F{NNN}_report.md` (assembled)
+   - `tier0_plain_language.md`
    - `tier1_decision_brief.md`
    - `tier2_evidence_narrative.md`
    - `tier3_technical_reference.md`
@@ -575,6 +613,7 @@ Path('data/F{NNN}/F{NNN}_report.html').write_text(html)
        - data/F{NNN}/F{NNN}_report.md
        - data/F{NNN}/F{NNN}_report.html
        - data/F{NNN}/F{NNN}_report.pdf
+       - data/F{NNN}/tier0_plain_language.md
        - data/F{NNN}/tier1_decision_brief.md
        - data/F{NNN}/tier2_evidence_narrative.md
        - data/F{NNN}/tier3_technical_reference.md
@@ -598,9 +637,10 @@ Path('data/F{NNN}/F{NNN}_report.html').write_text(html)
 Print to user:
 
 ```
-=== F{NNN} 3-Tier Report Generated ===
+=== F{NNN} Report Generated ===
 
-Tier 1 (Decision Brief):  {lines} lines
+Tier 0 (Plain Language):    {lines} lines
+Tier 1 (Decision Brief):    {lines} lines
 Tier 2 (Evidence Narrative): {lines} lines, {fig_count} figures
 Tier 3 (Technical Reference): {lines} lines
 
@@ -623,6 +663,7 @@ experiment-log: updated
 | 3a | agent-1 | sonnet | Decision table | tier1_decision_brief.md | 20-30 |
 | 3b | agent-2 | opus | Questions + MANIFEST + figures | tier2_evidence_narrative.md | 100-150 |
 | 3c | agent-3 | sonnet | MANIFEST + figures | tier3_technical_reference.md | 60-100 |
+| 3d | agent-4 | sonnet | Tier 1 + MANIFEST descriptions | tier0_plain_language.md | 20-30 |
 | 4 | Lead (you) | — | 3 tier files | F{NNN}_report.md | — |
 | 5 | Bash (parallel) | — | MD file | HTML + PDF | — |
 | 5.5 | designer | sonnet | HTML file | Improved HTML (CSS/layout only) | — |
