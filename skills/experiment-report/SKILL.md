@@ -91,7 +91,7 @@ For each confirmed question, extract an actionable decision:
 
 ### Phase 3: Parallel Tier Generation (3 agents)
 
-Spawn 3 parallel agents. Use the Agent tool with `subagent_type="general-purpose"`:
+Spawn 3 parallel agents with `subagent_type="general-purpose"`:
 
 #### Agent 1: Tier 1 — Decision Brief (sonnet, ~20-30 lines)
 

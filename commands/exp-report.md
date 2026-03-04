@@ -32,7 +32,7 @@ Generate a 3-Tier synthesis report from all `status: final` experiments in MANIF
 - MANIFEST.yaml with at least 3 `status: final` experiments
 - Each experiment needs `description`, `findings`, and `path` fields
 - Python with `markdown` package (for HTML conversion)
-- PyMuPDF/`fitz` package (for PDF conversion, optional)
+- PyMuPDF >= 1.21 / `fitz` package (for PDF conversion, requires Story API)
 
 ## Output
 

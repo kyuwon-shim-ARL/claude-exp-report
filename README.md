@@ -39,7 +39,7 @@ Or just say "experiment report", "synthesis report", "3-tier report", or "통합
 
 - MANIFEST.yaml with `status: final` experiments (at least 3)
 - Each experiment needs: `description`, `findings`, `path`
-- Python packages: `markdown` (HTML), `PyMuPDF` (PDF, optional)
+- Python packages: `markdown` (HTML conversion), `PyMuPDF >= 1.21` (PDF conversion, requires Story API)
 
 ## MANIFEST.yaml Format
 
