@@ -5,6 +5,14 @@ description: Generate 3-Tier synthesis report from MANIFEST.yaml experiments. Ac
 
 # 3-Tier Experiment Synthesis Report
 
+## CRITICAL: Mandatory Phase Execution
+
+**You MUST execute ALL 7 phases (0→1→2→3→4→5→5.5→6→7). DO NOT stop after Phase 4.**
+
+The most common failure is stopping after MD assembly (Phase 4) without running HTML/PDF conversion (Phase 5). The report is NOT complete until HTML and PDF files exist on disk. If you skip Phase 5, the user gets only raw Markdown — this defeats the purpose of the plugin.
+
+**Checkpoint rule**: After Phase 4, explicitly print `">>> Phase 5: Converting to HTML + PDF..."` before proceeding. If conversion scripts are missing, generate them from the embedded templates below. If Python packages are missing, print clear install instructions and attempt conversion anyway.
+
 ## The Insight
 
 Experiment-based analysis projects accumulate results across many experiments (E001, E002, ...) tracked in MANIFEST.yaml. Stakeholders need different levels of detail: executives want decisions (Tier 1), scientists want evidence narratives (Tier 2), and reviewers want technical specs (Tier 3). This skill generates a 3-Tier synthesis report from all `status: final` experiments, using parallel agents for each tier, then converts to HTML+PDF.
@@ -228,23 +236,39 @@ Constraints:
    - `tier2_evidence_narrative.md`
    - `tier3_technical_reference.md`
 
-### Phase 5: Conversion (HTML + PDF)
+### Phase 5: Conversion (HTML + PDF) — MANDATORY
 
-**Check for existing scripts:**
+> **⚠ DO NOT SKIP THIS PHASE.** The report is incomplete without HTML and PDF outputs.
+> Print `">>> Phase 5: Converting to HTML + PDF..."` before starting.
+
+**Step 5a: Ensure conversion scripts exist**
 - If `scripts/md_to_html.py` exists → use it
 - If `scripts/md_to_pdf.py` exists → use it
-- If either is missing → generate from embedded templates below
+- If either is missing → **generate from embedded templates below** (create `scripts/` directory if needed)
 
-**Run conversions in parallel:**
+**Step 5b: Check Python dependencies**
+```bash
+python -c "import markdown" 2>/dev/null || echo "WARNING: 'markdown' package not installed. Install with: pip install markdown"
+python -c "import fitz" 2>/dev/null || echo "WARNING: 'PyMuPDF' package not installed. Install with: pip install PyMuPDF"
+```
+- If `markdown` is missing: proceed with HTML conversion anyway (script has regex fallback)
+- If `fitz` is missing: skip PDF only, print install instruction, continue to Phase 5.5
+
+**Step 5c: Run conversions**
 ```bash
 python scripts/md_to_html.py data/F{NNN}/F{NNN}_report.md &
 python scripts/md_to_pdf.py data/F{NNN}/F{NNN}_report.md &
 wait
 ```
 
-**Verify outputs:**
-- `F{NNN}_report.html` size > 0
-- `F{NNN}_report.pdf` size > 0
+**Step 5d: Verify outputs (MUST check before proceeding)**
+```bash
+ls -la data/F{NNN}/F{NNN}_report.html data/F{NNN}/F{NNN}_report.pdf 2>&1
+```
+- `F{NNN}_report.html` size > 0 → proceed
+- `F{NNN}_report.pdf` size > 0 → proceed
+- If HTML is missing or empty → **STOP and debug** (check script output for errors)
+- If PDF is missing → log warning but continue (PDF requires PyMuPDF)
 
 #### Embedded Conversion Script Templates
 
@@ -582,17 +606,20 @@ If verification fails, patch Tier 2 to include missing numbers before proceeding
 | Including synthesis entries (f###) | Reports referencing other reports create circular dependencies | Phase 0 must exclude keys matching `/^f\d+/i` |
 | Figure numbering mismatches across tiers | Tier 2 says "Figure 3" but Tier 3 gallery has different numbering | Use consistent figure IDs tied to experiment IDs (e.g., "E005-Fig1") |
 | Using stale MANIFEST data | MANIFEST may have changed since last read | Re-read MANIFEST at Phase 0 start; do not cache across sessions |
+| Stopping after Phase 4 (MD only) | User gets raw Markdown without HTML/PDF — defeats the plugin purpose | MUST execute Phase 5 conversion; print checkpoint message before starting |
 | Designer agent rewriting full HTML | Base64-encoded images get silently corrupted by line truncation | Use CSS-extraction pattern: agent outputs `<style>` block only |
 
 ## Verification Checklist
 
-Before declaring completion, verify:
+Before declaring completion, verify **ALL** of the following. **If any REQUIRED item fails, the report is NOT complete — do not print the Phase 7 summary.**
 
 - [ ] All Tier 1 Decision Table numbers appear in Tier 2
 - [ ] All figure paths in the report exist on disk
 - [ ] Tier 3 cross-reference matrix lists ALL final experiments
-- [ ] HTML file size > 0 bytes
-- [ ] PDF file size > 0 bytes
+- [ ] **REQUIRED**: `F{NNN}_report.html` exists and size > 0 bytes (if missing, go back to Phase 5)
+- [ ] PDF file size > 0 bytes (optional — warn if missing, do not block)
 - [ ] MANIFEST.yaml updated with F{NNN} entry
 - [ ] experiment-log.md updated (if present)
 - [ ] No experiment with `status: experimental` or `status: deprecated` is cited
+
+**FAIL-SAFE**: If you reach Phase 7 without HTML output, STOP. Go back to Phase 5 and generate it.
