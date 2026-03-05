@@ -26,7 +26,7 @@ Reads your MANIFEST.yaml, filters `status: final` experiments, and generates a 4
 | **Tier 2** | Scientists | Evidence Narrative (conclusion-first, 1 figure per question) | 100-150 |
 | **Tier 3** | Reviewers | Technical Reference (collapsible specs, cross-reference) | 60-100 |
 
-Outputs: Markdown + self-contained HTML + PDF.
+Outputs: Markdown + self-contained HTML + PDF + deliverable package (ZIP with figures, tier files, and interpretation guide).
 
 ## Usage
 
@@ -62,9 +62,12 @@ experiments:
 - Parallel tier generation (3+1 agents: 3 parallel + Tier 0 sequential after Tier 1)
 - Cross-tier numeric verification (Tier 1 numbers must appear in Tier 0 and Tier 2)
 - MANIFEST field normalization (`title`→`description`, `result`→`findings`, auto-derive `path`)
-- Designer readability review on HTML output (CSS-extraction pattern)
+- Auto language detection (Korean/English) from MANIFEST content
+- Designer readability review on HTML output (CSS-extraction pattern) — skip with `--fast`
+- **Deliverable packaging**: Bundles report + original figures + interpretation guide into a shareable folder + ZIP
 - Auto-generates `md_to_html.py` and `md_to_pdf.py` if project lacks them
 - Updates MANIFEST.yaml and experiment-log.md automatically
+- See `examples/MANIFEST.yaml` for a reference MANIFEST with edge cases
 
 ## Compatibility
 

@@ -19,6 +19,7 @@ Generate a synthesis report from all `status: final` experiments in MANIFEST.yam
    - **Tier 3**: Technical Reference (~60-100 lines, collapsible specs + cross-reference)
 5. Assembles into single report, verifies numeric consistency across tiers
 6. Converts to HTML + PDF with designer readability review
+6.5. Packages deliverable folder (report + figures + GUIDE.md + ZIP)
 7. Updates MANIFEST.yaml and experiment-log.md
 
 ## Usage
@@ -47,8 +48,16 @@ data/F{NNN}/
   tier1_decision_brief.md      # Tier 1 source
   tier2_evidence_narrative.md  # Tier 2 source
   tier3_technical_reference.md # Tier 3 source
+  F{NNN}_deliverable.zip       # Shareable deliverable archive
+  deliverable/                 # Stakeholder-ready folder
+    F{NNN}_report.html         #   Self-contained report
+    F{NNN}_report.pdf          #   Print version
+    F{NNN}_report.md           #   MD with relative figure paths
+    figures/                   #   Original figures by experiment
+    tiers/                     #   Individual tier source files
+    GUIDE.md                   #   Interpretation guide
 ```
 
 ## Invoke the Skill
 
-This command activates the `experiment-report` skill. Read the full skill documentation for details on the 9-phase workflow, agent dispatch table, and verification protocol.
+This command activates the `experiment-report` skill. Read the full skill documentation for details on the 10-phase workflow, agent dispatch table, and verification protocol.

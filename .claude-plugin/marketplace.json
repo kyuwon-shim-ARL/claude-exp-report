@@ -9,7 +9,7 @@
     {
       "name": "exp-report",
       "description": "Generate multi-tier synthesis reports (Plain Language + Decision Brief + Evidence Narrative + Technical Reference) from MANIFEST.yaml experiments with parallel agents, designer review, and auto HTML+PDF conversion. Includes /exp-report command.",
-      "version": "1.6.0",
+      "version": "1.7.0",
       "author": {
         "name": "kyuwon-shim-ARL"
       },
