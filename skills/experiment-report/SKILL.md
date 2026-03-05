@@ -53,17 +53,18 @@ bundle / share deliverables
 ### Phase 0: Pre-flight
 
 1. **Locate MANIFEST.yaml**: Search in order: `outputs/MANIFEST.yaml` → `MANIFEST.yaml` → prompt user
-2. **Filter experiments**: Extract only `status: final` entries. **Exclude synthesis/report entries** (keys matching `/^f\d+/i` such as f001, f002) — these are reports, not source experiments. Warn if fewer than 3 source experiments remain.
+2. **Filter experiments**: Extract only `status: final` entries. **Exclude synthesis/report entries** (keys matching `/^f\d+/i` such as f001, f002) — these are reports, not source experiments. **Mark superseded experiments**: If an experiment's `notes` or `findings` field indicates it was superseded (e.g., "superseded by E017"), flag it as `superseded: true` — it counts toward exhaustiveness but should be cited as `E010→E017 (superseded)` rather than discussed independently. **If 0 final source experiments remain after filtering, HALT and inform the user — do not proceed to Phase 1.** Warn if fewer than 3 source experiments remain.
 3. **Normalize MANIFEST fields**: Not all projects use the same field names. Apply this normalization chain before proceeding:
    - `description` ← fall back to `title` if `description` is missing
    - `findings` ← fall back to `result`, then `conclusion`, then `description` if `findings` is missing
-   - `path` ← if missing, derive from `outputs[0]` parent directory (e.g., `data/E001/figures/plot.png` → `data/E001/`)
+   - `path` ← if missing, derive from `outputs[0]` parent directory (e.g., `data/E001/figures/plot.png` → `data/E001/`). If `outputs[0]` is also a bare filename with no directory component, log a warning and skip this experiment from figure registry (path unresolvable).
    - When an output entry is a bare filename (no path separator), resolve as `{path}/{filename}`
-   Log which fields were normalized and continue — do not fail on missing canonical field names.
-4. **Build figure registry**: For each final experiment, glob `{exp.path}/figures/*.png` to build a map of available figures. **If an experiment has zero figures**, record it as `figures: []` and log a note — do not fail. Tier 2 should skip figure embedding for that question if no relevant figure exists.
-5. **Auto-detect F-number**: Scan MANIFEST for existing `f###` entries (case-insensitive). Next number = max + 1. Format as `F{NNN}` (e.g., F004).
-6. **Check conversion scripts**: Look for `scripts/md_to_html.py` and `scripts/md_to_pdf.py`. If missing, generate them from embedded templates in Phase 5.
-7. **Create output directory**: `data/F{NNN}/`
+   Log which fields were normalized and continue — do not fail on missing canonical field names. **Escalation**: If ALL experiments required `findings` fallback to `description`, warn the user that the Decision Table will contain descriptions rather than empirical findings.
+4. **Detect MANIFEST language**: Inspect the `description` fields of the first 3 experiments. If majority are Korean → set `manifest_language = "Korean"`. If majority are English → `"English"`. For mixed cases, default to the language of the first experiment and log a note. Propagate `manifest_language` to all tier agent prompts.
+5. **Build figure registry**: For each final experiment, glob `{exp.path}/figures/*.png` to build a map of available figures. **If an experiment has zero figures**, record it as `figures: []` and log a note — do not fail. Tier 2 should skip figure embedding for that question if no relevant figure exists.
+6. **Auto-detect F-number**: Scan MANIFEST for existing `f###` entries (case-insensitive). Next number = max + 1. Format as `F{NNN}` (e.g., F004).
+7. **Check conversion scripts**: Look for `scripts/md_to_html.py` and `scripts/md_to_pdf.py`. If missing, generate them from embedded templates in Phase 5.
+8. **Create output directory**: `data/F{NNN}/`
 
 ### Phase 1: Question Discovery (hybrid)
 
@@ -135,6 +136,11 @@ Verify that answering ALL questions produces a coherent final conclusion. Draft 
 - Wait for user response before proceeding
 - Each question should be a single sentence ending with "?"
 
+**Post-edit re-validation**: After the user confirms, edits, or reorders questions, re-run Checks 1 and 4:
+- **Re-check exhaustiveness** (Check 1): If the user deleted a question, verify all its experiments are reassigned to remaining questions. List any orphaned experiments and ask the user how to handle them before proceeding.
+- **Re-check count** (Check 4): If the user reduced below 4 or expanded above 6, accept their decision but log a note.
+- If the user rejects all questions and requests a restart, return to the auto-derivation step with the user's feedback incorporated.
+
 ### Phase 2: Decision Table Draft (lead agent, sequential)
 
 For each confirmed question, extract an actionable decision:
@@ -191,7 +197,7 @@ Constraints:
 ```
 You are writing Tier 2 (Evidence Narrative) of a multi-tier experiment synthesis report.
 
-Input: MANIFEST.yaml final experiments, confirmed questions from Phase 1 (with narrative arc labels: Claim/Mechanism/Boundary/Practical and experiment assignments), figure registry.
+Input: MANIFEST.yaml final experiments (including `notes` fields — these contain critical context such as retroactive pipeline definitions, methodological caveats, and exclusion rationale), confirmed questions from Phase 1 (with narrative arc labels: Claim/Mechanism/Boundary/Practical and experiment assignments), figure registry.
 
 Output file: data/F{NNN}/tier2_evidence_narrative.md
 
@@ -210,7 +216,7 @@ with the finding, then explain methodology and context. Cite experiment IDs (E00
 ---
 
 Constraints:
-- Exactly 1 figure per question (select most informative from registry)
+- 1 figure per question where available (select most informative from registry); if no relevant figure exists for a question, skip the figure block and note "No figure available" in the Implication line
 - Bold verdict opener for every question — first sentence states the conclusion
 - Every Tier 1 number must appear somewhere in Tier 2
 - Paragraphs are dense (no bullet lists in the narrative)
@@ -220,9 +226,12 @@ Constraints:
   the pipeline works, the next question is why...")
 - If an experiment appears in multiple questions, discuss only the aspect
   relevant to the current question (do not repeat the same analysis)
+- Follow the language of the MANIFEST content (Korean/English)
+- If multiple formal hypothesis tests are cited across questions, note the total count and whether family-wise error rate correction (e.g., Holm, Bonferroni) was applied
+- Scan for statistical language consistency: do not use "significantly" unless the cited p-value is < 0.05; use "practical improvement" or "non-significant trend" for p ≥ 0.05
 ```
 
-#### Agent 3: Tier 3 — Technical Reference (sonnet, ~60-100 lines)
+#### Agent 3: Tier 3 — Technical Reference (haiku, ~60-100 lines)
 
 **Prompt template:**
 ```
@@ -255,10 +264,11 @@ for each final experiment...
 
 Constraints:
 - Everything inside <details> tags for collapsibility
-- Pipeline spec in code block (not prose)
-- Cross-reference matrix must list ALL final experiments
+- Pipeline spec in code block (not prose). If no canonical pipeline experiment exists, label Section A as "N/A — no canonical pipeline defined" rather than guessing
+- Cross-reference matrix must list ALL final experiments (including superseded ones, marked as such)
 - Figure paths must be valid (from registry)
 - No narrative — this is reference material only
+- Follow the language of the MANIFEST content (Korean/English)
 ```
 
 #### Agent 4: Tier 0 — Plain Language Summary (sonnet, ~20-30 lines)
@@ -294,6 +304,14 @@ Constraints:
 - Match the language of the MANIFEST content (Korean → Korean, English → English)
 ```
 
+**Phase 3 Exit Criterion**: Before proceeding to Phase 4, verify ALL 4 tier files exist and are non-empty:
+```bash
+for f in tier0_plain_language.md tier1_decision_brief.md tier2_evidence_narrative.md tier3_technical_reference.md; do
+  [ -s "data/F{NNN}/$f" ] || echo "MISSING: $f"
+done
+```
+If any file is missing, re-spawn the failed agent before proceeding. If Agent 1 (Tier 1) failed, Agent 4 (Tier 0) cannot run — fix Agent 1 first.
+
 ### Phase 4: Assembly + Verification
 
 1. **Concatenate**: Read tier0, tier1, tier2, tier3 files → assemble into `F{NNN}_report.md`
@@ -328,7 +346,7 @@ Constraints:
 3. **Figure path verification**:
    - Extract all `![...](path)` references from the assembled report
    - Check each path exists on disk
-   - Report any broken paths
+   - **If a path is broken**: remove the figure reference from the report and log a warning. Do not block Phase 5 for broken figures, but report them in Phase 8 summary.
 
 4. **Save all files** to `data/F{NNN}/`:
    - `F{NNN}_report.md` (assembled)
@@ -353,7 +371,7 @@ python -c "import markdown" 2>/dev/null || echo "WARNING: 'markdown' package not
 python -c "import fitz" 2>/dev/null || echo "WARNING: 'PyMuPDF' package not installed. Install with: pip install PyMuPDF"
 ```
 - If `markdown` is missing: proceed with HTML conversion anyway (script has regex fallback)
-- If `fitz` is missing: the PDF script self-aborts — no intervention needed. Always run both scripts as shown in Step 5c. Continue to Phase 6
+- If `fitz` is missing: the PDF script raises `ImportError` at runtime — no pre-intervention needed. Always run both scripts as shown in Step 5c. Continue to Phase 6
 
 **Step 5c: Run conversions**
 ```bash
@@ -561,9 +579,9 @@ if __name__ == '__main__':
     generate_pdf(i, o)
 ```
 
-### Phase 6: Designer Review (CSS-extraction pattern)
+### Phase 6: Designer Review (CSS-extraction pattern) — Optional with `--fast`
 
-After HTML conversion, automatically invoke an agent to generate CSS improvements. **Critical**: the agent must NOT read or rewrite the full HTML file (Base64-encoded images cause silent corruption when agent tools truncate long lines). Instead, use the **CSS-extraction pattern**:
+After HTML conversion, invoke an agent to generate CSS improvements. **Skip this phase if the user passed `--fast` or `--no-design` flag** — proceed directly to Phase 7. **Critical**: the agent must NOT read or rewrite the full HTML file (Base64-encoded images cause silent corruption when agent tools truncate long lines). Instead, use the **CSS-extraction pattern**:
 
 1. Agent reads the HTML file to understand its structure
 2. Agent outputs **ONLY a `<style>` block** with CSS improvements
@@ -623,7 +641,7 @@ Path('data/F{NNN}/F{NNN}_report.html').write_text(html)
 
 **After designer review, re-verify:**
 - HTML file size > 0
-- All Base64 images still intact (spot-check file size is within 5% of pre-review size)
+- All Base64 images still intact (post-injection size should be >= pre-injection size, since CSS only adds bytes; a decrease indicates corruption)
 - Content unchanged (spot-check: Decision Table numbers match Tier 1)
 
 ### Phase 7: Bookkeeping
@@ -646,7 +664,7 @@ Path('data/F{NNN}/F{NNN}_report.html').write_text(html)
        - data/F{NNN}/tier3_technical_reference.md
      status: final
      description: "F{NNN} Integrated Report: 4-Tier synthesis of {N} experiments"
-     findings: "[auto-filled from Tier 1 executive summary]"
+     findings: "[Extract the first 2 sentences of the Tier 1 Executive Summary paragraph verbatim. Maximum 200 characters. Do not paraphrase.]"
      notes: "[HTML size, PDF size/pages, line count vs previous report]"
    ```
 
@@ -668,7 +686,7 @@ Print to user:
 
 Tier 0 (Plain Language):    {lines} lines
 Tier 1 (Decision Brief):    {lines} lines
-Tier 2 (Evidence Narrative): {lines} lines, {fig_count} figures
+Tier 2 (Evidence Narrative): {lines} lines, {count of ![...] references in tier2} figures
 Tier 3 (Technical Reference): {lines} lines
 
 Assembled: data/F{NNN}/F{NNN}_report.md ({total_lines} lines)
@@ -689,7 +707,7 @@ experiment-log: updated
 | 2 | Lead (you) | — | Confirmed questions + MANIFEST | Decision table | 10-15 |
 | 3a | agent-1 | sonnet | Decision table | tier1_decision_brief.md | 20-30 |
 | 3b | agent-2 | opus | Questions + MANIFEST + figures | tier2_evidence_narrative.md | 100-150 |
-| 3c | agent-3 | sonnet | MANIFEST + figures | tier3_technical_reference.md | 60-100 |
+| 3c | agent-3 | haiku | MANIFEST + figures | tier3_technical_reference.md | 60-100 |
 | 3d | agent-4 | sonnet | Tier 1 + MANIFEST descriptions | tier0_plain_language.md | 20-30 |
 | | | | *(sequential after 3a)* | | |
 | 4 | Lead (you) | — | 4 tier files | F{NNN}_report.md | — |
@@ -704,12 +722,16 @@ After assembly, run this verification:
 
 1. **Extract Tier 1 numbers**: Parse Decision Table cells using this regex pattern:
    ```
-   \b\d+\.?\d*%?\b
+   [-+]?\d+\.?\d*(?:[eE][-+]?\d+)?%?
    ```
-   This matches: `90.5`, `86%`, `0.45`, `13`, `p<0.05`. **Exclude** from matching: dates (2024-01-15), figure numbers (Figure 1), section numbers (Q1, D1), and experiment IDs (E001).
-2. **Search Tier 2**: For each extracted Tier 1 number, verify it appears at least once in Tier 2 text (exact string match)
-3. **Search Tier 0**: For each extracted Tier 1 number, verify it appears at least once in Tier 0 text (with plain-language context around technical terms)
-4. **Cross-check MANIFEST**: For each number in Tier 1, verify it traces to a MANIFEST `findings` field (or normalized equivalent: `result`, `conclusion`)
+   This matches: `90.5`, `86%`, `0.45`, `−0.220`, `1e-30`, `p<0.05`. **Exclude** from matching using context filters:
+   - Dates: skip numbers preceded by year context (e.g., `2024-01-15`)
+   - Section/figure numbers: skip `Figure N`, `Q1`, `D1`, `E001`
+   - Bootstrap/iteration counts: skip numbers in "N iterations/resamples" context
+   For ranges like `[0.81–1.00]`, extract both endpoints as separate numbers.
+2. **Search Tier 2**: For each extracted Tier 1 number, verify it appears **traceably** in Tier 2 text. Traceably means: exact match OR within rounding tolerance (e.g., `90.5%` matches `90.48%`; `0.053` matches `0.055` if both refer to the same metric with a note). Flag rounding differences > 5% relative for manual review.
+3. **Search Tier 0**: For each extracted Tier 1 number, verify it appears traceably in Tier 0 text (with plain-language context around technical terms)
+4. **Cross-check MANIFEST**: For each number in Tier 1, verify it traces to a MANIFEST `findings` or `notes` field (or normalized equivalent: `result`, `conclusion`)
 5. **Report**: List any orphaned numbers (in Tier 1 but not in Tier 2, Tier 0, or MANIFEST)
 
 If verification fails, patch Tier 2 to include missing numbers before proceeding to Phase 5.
@@ -725,28 +747,32 @@ If verification fails, patch Tier 2 to include missing numbers before proceeding
 | Hardcoding project-specific terms | Makes skill non-reusable | Use MANIFEST content as-is; no hardcoded drug names, class names, etc. |
 | Generating figures in the report | Report synthesizes existing figures, not new ones | Select from figure registry only |
 | Skipping user confirmation of questions | May generate irrelevant questions | Always present questions and wait for user confirmation |
-| Including non-final experiments | Draft/deprecated experiments pollute the report | Phase 0 must filter `status: final` only |
-| Including synthesis entries (f###) | Reports referencing other reports create circular dependencies | Phase 0 must exclude keys matching `/^f\d+/i` |
+| Including non-final or synthesis (f###) experiments | Draft/deprecated experiments pollute the report; synthesis entries create circular dependencies | Phase 0 must filter `status: final` only AND exclude keys matching `/^f\d+/i` |
 | Figure numbering mismatches across tiers | Tier 2 says "Figure 3" but Tier 3 gallery has different numbering | Use consistent figure IDs tied to experiment IDs (e.g., "E005-Fig1") |
 | Using stale MANIFEST data | MANIFEST may have changed since last read | Re-read MANIFEST at Phase 0 start; do not cache across sessions |
-| Flat question list without hierarchy | Readers see no logical progression; questions feel arbitrary | Order questions as narrative arc: Claim→Mechanism→Boundary→Practical |
-| Siloing statistical rigor as standalone question | Last question retroactively undermines all prior claims | Integrate CI/power into the claim or practical question |
+| Flat question list without hierarchy (including siloing statistical rigor as standalone) | Readers see no logical progression; a standalone "adequately powered?" question retroactively undermines all prior claims | Order as narrative arc: Claim→Mechanism→Boundary→Practical; integrate CI/power into claim or practical question |
 | Unassigned experiments | Experiments missing from all questions produce incomplete synthesis | Check exhaustiveness: every final experiment in at least one question |
 | Stopping after Phase 4 (MD only) | User gets raw Markdown without HTML/PDF — defeats the plugin purpose | Phase 4 is complete ONLY when Phase 5 has executed and HTML exists on disk |
 | Designer agent rewriting full HTML | Base64-encoded images get silently corrupted by line truncation | Use CSS-extraction pattern: agent outputs `<style>` block only |
+| Embedding large Base64 images without size guard | Reports with 20+ experiments produce >10MB HTML that degrades browser performance | If total figure registry exceeds 10MB, warn the user and consider linking external images instead of embedding |
+| Using "significantly" with p ≥ 0.05 | Incorrect statistical language misleads readers | Scan Tier 2 for "significantly" and verify adjacent p-value is < 0.05; use "practical improvement (p=X, n.s.)" otherwise |
 
 ## Verification Checklist
 
 Before declaring completion, verify **ALL** of the following. **If any REQUIRED item fails, the report is NOT complete — do not print the Phase 8 summary.**
 
-- [ ] All Tier 1 Decision Table numbers appear in Tier 2
-- [ ] All Tier 1 Decision Table numbers appear in Tier 0 (with plain-language context)
-- [ ] All figure paths in the report exist on disk
-- [ ] Tier 3 cross-reference matrix lists ALL final experiments
+- [ ] All Tier 1 Decision Table numbers appear traceably in Tier 2
+- [ ] All Tier 1 Decision Table numbers appear traceably in Tier 0 (with plain-language context)
+- [ ] All figure paths in the report exist on disk (broken paths removed with warning)
+- [ ] Tier 2 figure count matches the number of questions (1 per question where figures are available)
+- [ ] Tier 3 cross-reference matrix lists ALL final experiments (including superseded)
+- [ ] Every `status: final` experiment is assigned to at least one question
+- [ ] All 4 tier files exist on disk and are non-empty (tier0, tier1, tier2, tier3)
 - [ ] **REQUIRED**: `F{NNN}_report.html` exists and size > 0 bytes (if missing, go back to Phase 5)
 - [ ] PDF file size > 0 bytes (optional — warn if missing, do not block)
 - [ ] MANIFEST.yaml updated with F{NNN} entry
 - [ ] experiment-log.md updated (if present)
 - [ ] No experiment with `status: experimental` or `status: deprecated` is cited
+- [ ] No "significantly" language used alongside p ≥ 0.05 in Tier 2
 
 **FAIL-SAFE**: If you reach Phase 8 without HTML output, STOP. Go back to Phase 5 and generate it.
