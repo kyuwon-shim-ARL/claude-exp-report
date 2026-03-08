@@ -52,7 +52,7 @@ bundle / share deliverables
 
 ### Phase 0: Pre-flight
 
-1. **Locate MANIFEST.yaml**: Search in order: `outputs/MANIFEST.yaml` → `MANIFEST.yaml` → prompt user
+1. **Locate MANIFEST.yaml**: Search in order: `outputs/MANIFEST.yaml` → `MANIFEST.yaml` → prompt user. **Set `today`** = current date in `YYYY-MM-DD` format. **Set `PLUGIN_VERSION`** = `"1.8.0"`.
 2. **Filter experiments**: Extract only `status: final` entries. **Exclude synthesis/report entries** (keys matching `/^f\d+/i` such as f001, f002) — these are reports, not source experiments. **Mark superseded experiments**: If an experiment's `notes` or `findings` field indicates it was superseded (e.g., "superseded by E017"), flag it as `superseded: true` — it counts toward exhaustiveness but should be cited as `E010→E017 (superseded)` rather than discussed independently. **If 0 final source experiments remain after filtering, HALT and inform the user — do not proceed to Phase 1.** **If only 1-2 final source experiments remain, HALT — synthesis requires at least 3 experiments for meaningful MECE question clustering. Suggest the user finalize more experiments or use a simple summary instead.**
 3. **Normalize MANIFEST fields**: Not all projects use the same field names. Apply this normalization chain before proceeding:
    - `description` ← fall back to `title` if `description` is missing
@@ -61,20 +61,43 @@ bundle / share deliverables
    - When an output entry is a bare filename (no path separator), resolve as `{path}/{filename}`
    Log which fields were normalized and continue — do not fail on missing canonical field names. **Escalation**: If ALL experiments required `findings` fallback to `description`, warn the user that the Decision Table will contain descriptions rather than empirical findings.
 4. **Detect MANIFEST language**: Inspect the `description` fields of the first 3 experiments. If majority are Korean → set `manifest_language = "Korean"`. If majority are English → `"English"`. For mixed cases, default to the language of the first experiment and log a note. **Propagation mechanism**: Include `manifest_language` as an explicit variable in every agent prompt by prepending `Language: {manifest_language}` to each agent's Input section. Do NOT rely on agents to auto-detect language from content — explicit injection ensures consistency across all 4 tiers.
-5. **Build figure registry**: For each final experiment, glob `{exp.path}/figures/*.png` to build a structured registry:
+5. **Build figure registry**: Collect figures from **two sources** (MANIFEST `outputs` field is primary, glob is supplementary):
+   ```python
+   SUPPORTED_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.svg'}
+   figure_registry = []
+   seen_paths = set()
+   for exp_id, exp in final_experiments.items():
+       # Primary: resolved outputs from MANIFEST
+       for output_path in exp.get('outputs', []):
+           p = Path(output_path)
+           if p.suffix.lower() in SUPPORTED_EXTS and str(p) not in seen_paths:
+               seen_paths.add(str(p))
+               figure_registry.append({
+                   "original_path": str(p),
+                   "exp_id": exp_id.upper(),
+                   "stem": p.stem,
+                   "suffix": p.suffix,
+                   "deliverable_name": f"{exp_id.upper()}_{p.stem}{p.suffix}",
+                   "size_bytes": p.stat().st_size if p.exists() else 0
+               })
+       # Supplementary: glob for figures not listed in outputs
+       for p in sorted(Path(exp['path']).glob('figures/*')):
+           if p.suffix.lower() in SUPPORTED_EXTS and str(p) not in seen_paths:
+               seen_paths.add(str(p))
+               figure_registry.append({
+                   "original_path": str(p),
+                   "exp_id": exp_id.upper(),
+                   "stem": p.stem,
+                   "suffix": p.suffix,
+                   "deliverable_name": f"{exp_id.upper()}_{p.stem}{p.suffix}",
+                   "size_bytes": p.stat().st_size if p.exists() else 0
+               })
    ```
-   figure_registry = [
-     { "original_path": "data/E001/figures/roc_curve.png",
-       "exp_id": "E001", "stem": "roc_curve", "suffix": ".png",
-       "deliverable_name": "E001_roc_curve.png",
-       "size_bytes": <file_size> },
-     ...
-   ]
-   ```
-   The `deliverable_name` uses `{exp_id}_{stem}{suffix}` to prevent filename collisions. **Deduplicate**: if two experiments share the same original file path, keep only the first-seen entry and log a note. **If an experiment has zero figures**, record it as empty and log a note — do not fail. Tier 2 should skip figure embedding for that question if no relevant figure exists. **Size guard**: Compute `total_figure_size_bytes` from the registry. If total exceeds 50 MB, warn the user that the deliverable will be large.
+   The `deliverable_name` uses `{exp_id}_{stem}{suffix}` to prevent filename collisions. **Deduplicate**: `seen_paths` ensures each file appears only once — first-seen entry wins (log a note on duplicates). **If an experiment has zero figures**, record it as empty and log a note — do not fail. Tier 2 should skip figure embedding for that question if no relevant figure exists. **Size guard**: Compute `total_figure_size_bytes` from the registry. If total exceeds 50 MB, warn the user that the deliverable will be large.
 6. **Auto-detect F-number**: Scan MANIFEST for existing `f###` entries (case-insensitive). Next number = max + 1. Format as `F{NNN}` (e.g., F004).
 7. **Check conversion scripts**: Look for `scripts/md_to_html.py` and `scripts/md_to_pdf.py`. If missing, generate them from embedded templates in Phase 5.
 8. **Create output directory**: `data/F{NNN}/`
+9. **Serialize computed data**: Save figure registry to `data/F{NNN}/figure_registry.json` (agents need this file as input). Save experiment summary to `data/F{NNN}/experiments.json` (experiment IDs, descriptions, findings, paths, superseded flags).
 
 ### Phase 1: Question Discovery (hybrid)
 
@@ -151,6 +174,8 @@ Verify that answering ALL questions produces a coherent final conclusion. Draft 
 - **Re-check count** (Check 4): If the user reduced below 4 or expanded above 6, accept their decision but log a note.
 - If the user rejects all questions and requests a restart, return to the auto-derivation step with the user's feedback incorporated.
 
+**Serialize**: Save confirmed questions to `data/F{NNN}/questions.json` (array of `{id, text, arc_label, experiment_ids}`). Agents 2 and 4 read this file.
+
 ### Phase 2: Decision Table Draft (lead agent, sequential)
 
 For each confirmed question, extract an actionable decision:
@@ -166,6 +191,8 @@ For each confirmed question, extract an actionable decision:
 - Judgments use definitive language: "confirmed", "not supported", "conditional on..."
 - Evidence cites experiment IDs (E001, E012, etc.)
 
+**Serialize**: Save Decision Table to `data/F{NNN}/decision_table.md`. Agent 1 reads this file.
+
 ### Phase 3: Tier Generation (3+1 agents)
 
 Spawn agents in two waves:
@@ -180,12 +207,12 @@ Use `subagent_type="general-purpose"` for all agents:
 ```
 You are writing Tier 1 (Decision Brief) of a multi-tier experiment synthesis report.
 
-Input: MANIFEST.yaml final experiments, Decision Table from Phase 2, Date: {today}, Experiment count: {N}, Language: {manifest_language}.
+Input: MANIFEST.yaml final experiments, Decision Table from Phase 2 (`data/F{NNN}/decision_table.md`), Date: {today}, Experiment count: {EXPERIMENT_COUNT}, Language: {manifest_language}.
 
 Output file: data/F{NNN}/tier1_decision_brief.md
 
 Structure:
-1. Title line with version (F{NNN} v1.0), date ({today}), experiment count ({N})
+1. Title line with version (F{NNN} v1.0), date ({today}), experiment count ({EXPERIMENT_COUNT})
 2. Executive Summary (1 paragraph, ~5 sentences):
    - What was done (system, method)
    - Headline result (best metric)
@@ -208,19 +235,19 @@ Constraints:
 ```
 You are writing Tier 2 (Evidence Narrative) of a multi-tier experiment synthesis report.
 
-Input: MANIFEST.yaml final experiments (including `notes` fields — these contain critical context such as retroactive pipeline definitions, methodological caveats, and exclusion rationale), confirmed questions from Phase 1 (with narrative arc labels: Claim/Mechanism/Boundary/Practical and experiment assignments), figure registry.
+Input: MANIFEST.yaml final experiments (including `notes` fields — these contain critical context such as retroactive pipeline definitions, methodological caveats, and exclusion rationale), confirmed questions from Phase 1 (`data/F{NNN}/questions.json` — with narrative arc labels: Claim/Mechanism/Boundary/Practical and experiment assignments), figure registry (`data/F{NNN}/figure_registry.json`).
 
 Output file: data/F{NNN}/tier2_evidence_narrative.md
 
 Structure — for each question Q1..QN:
-### Q{N}: [Question text]
+### Q{i}: [Question text]
 **Verdict: [Bold one-sentence conclusion with key numbers in the first sentence.]**
 
 [2-3 paragraphs of evidence narrative. Conclusion-first style — start each paragraph
 with the finding, then explain methodology and context. Cite experiment IDs (E001, E012).]
 
 ![Figure caption](path/to/figure.png)
-*Figure {N}. Description (experiment ID)*
+*Figure {i}. Description (experiment ID)*
 
 **Implication**: [One sentence on what this means for the project]
 
@@ -249,7 +276,7 @@ Constraints:
 ```
 You are writing Tier 3 (Technical Reference) of a multi-tier experiment synthesis report.
 
-Input: MANIFEST.yaml final experiments, figure registry.
+Input: MANIFEST.yaml final experiments, figure registry (`data/F{NNN}/figure_registry.json`).
 
 Output file: data/F{NNN}/tier3_technical_reference.md
 
@@ -320,12 +347,21 @@ Constraints:
 ```
 
 **Phase 3 Exit Criterion**: Before proceeding to Phase 4, verify ALL 4 tier files exist and are non-empty:
-```bash
-for f in tier0_plain_language.md tier1_decision_brief.md tier2_evidence_narrative.md tier3_technical_reference.md; do
-  [ -s "data/F{NNN}/$f" ] || echo "MISSING: $f"
-done
+```python
+# Pseudo-code — substitute actual F-number for {NNN}
+tier_files = ['tier0_plain_language.md', 'tier1_decision_brief.md',
+              'tier2_evidence_narrative.md', 'tier3_technical_reference.md']
+for f in tier_files:
+    p = Path(f'data/F{NNN}/{f}')
+    if not p.exists() or p.stat().st_size == 0:
+        print(f"MISSING or EMPTY: {f}")
+    # Minimum quality checks:
+    #   tier1 must contain a pipe table (|...|)
+    #   tier2 must contain question headers (### Q)
+    #   tier3 must contain <details>
+    #   tier0 must contain its expected title
 ```
-If any file is missing, re-spawn the failed agent before proceeding. If Agent 1 (Tier 1) failed, Agent 4 (Tier 0) cannot run — fix Agent 1 first.
+If any file is missing, re-spawn the failed agent (max 2 retries per agent) before proceeding. If Agent 1 (Tier 1) failed, Agent 4 (Tier 0) cannot run — fix Agent 1 first.
 
 ### Phase 4: Assembly + Verification
 
@@ -333,7 +369,7 @@ If any file is missing, re-spawn the failed agent before proceeding. If Agent 1 
 
    ```markdown
    # [Project Title]: [Report Subtitle]
-   **Version**: F{NNN} v1.0 | **Date**: {today} | **Data**: {N} experiments ({range})
+   **Version**: F{NNN} v1.0 | **Date**: {today} | **Data**: {EXPERIMENT_COUNT} experiments ({range})
 
    ---
 
@@ -352,11 +388,30 @@ If any file is missing, re-spawn the failed agent before proceeding. If Agent 1 
    {tier3 content — Technical Reference in <details>}
    ```
 
-2. **Cross-tier numeric verification**:
-   - Extract all numbers from Tier 1 Decision Table
-   - For each number, verify it appears in Tier 2
-   - For each number, verify it appears in Tier 0 (with plain-language context — e.g., "AUC 0.92" → "scored 0.92 on AUC, a measure where 1.0 is perfect")
-   - If any Tier 1 number is missing from Tier 2 or Tier 0, flag and fix
+2. **Cross-tier numeric verification** (detailed protocol):
+
+   **Step 2a — Extract Tier 1 numbers**: Parse Decision Table cells using this regex:
+   ```
+   (?<!\d)[−\-+]?\d[\d,]*\.?\d*(?:[eE][−\-+]?\d+)?%?
+   ```
+   This handles: `90.5`, `86%`, `0.45`, `−0.220` (Unicode minus U+2212), `1e-30`, `1,234`. **Pre-process CI ranges** before extraction: replace `(\d+\.?\d*)\s*[-–−]\s*(\d+\.?\d*)` with two separate numbers to avoid misinterpreting range hyphens as negative signs (e.g., `0.81-0.89` → `0.81` and `0.89`, NOT `-0.89`). **Normalize commas**: strip `,` from comma-formatted numbers before comparison (`1,234` → `1234`).
+
+   **Exclude** from matching using these filters:
+   - Dates: skip numbers preceded by year context (e.g., `2024-01-15`)
+   - Section/figure numbers: skip `Figure N`, `Q1`, `D1`, `E001`
+   - Compound identifiers: skip numbers inside `[A-Z]{2,}\d+` patterns (EC50, IC50, LD50)
+   - Contextual counts: skip "N-fold", "N features", "N variables", "N minutes", "N iterations", "N resamples"
+   - Bootstrap/iteration counts: skip numbers in "N iterations/resamples" context
+
+   **Step 2b — Search Tier 2**: For each extracted Tier 1 number, verify it appears **traceably** in Tier 2 text. Traceably means: exact match OR within rounding tolerance (e.g., `90.5%` matches `90.48%`). Handle percentage/decimal equivalence: `0.905` matches `90.5%`. Flag rounding differences > 5% relative for manual review.
+
+   **Step 2c — Search Tier 0**: For each extracted Tier 1 number, verify it appears traceably in Tier 0 text (with plain-language context around technical terms — e.g., "AUC 0.92" → "scored 0.92 on AUC, a measure where 1.0 is perfect")
+
+   **Step 2d — Cross-check MANIFEST**: For each number in Tier 1, verify it traces to a MANIFEST `findings` or `notes` field (or normalized equivalent: `result`, `conclusion`)
+
+   **Step 2e — Report**: List any orphaned numbers (in Tier 1 but not in Tier 2, Tier 0, or MANIFEST)
+
+   If verification fails, patch Tier 2 to include missing numbers before proceeding to Phase 5.
 
 3. **Figure path verification**:
    - Extract all `![...](path)` references from the assembled report
@@ -624,10 +679,10 @@ if __name__ == '__main__':
 
 ### Phase 6: Designer Review (CSS-extraction pattern) — Optional with `--fast`
 
-After HTML conversion, invoke an agent to generate CSS improvements. **Skip this phase if the user passed `--fast` or `--no-design` flag** — proceed directly to Phase 6.5 (deliverable packaging still runs). **Critical**: the agent must NOT read or rewrite the full HTML file (Base64-encoded images cause silent corruption when agent tools truncate long lines). Instead, use the **CSS-extraction pattern**:
+After HTML conversion, invoke an agent to generate CSS improvements. **Skip this phase if the user passed `--fast` or `--no-design` flag** (these flags may appear anywhere in the user's invocation message, e.g., `/exp-report --fast`) — proceed directly to Phase 6.5 (deliverable packaging still runs). **Critical**: use the **CSS-extraction pattern** to avoid Base64 image corruption from agent line truncation:
 
-1. Agent reads the HTML file to understand its structure
-2. Agent outputs **ONLY a `<style>` block** with CSS improvements
+1. Agent SHOULD read the HTML file to understand its structure (DOM, class names, element types)
+2. Agent outputs **ONLY a `<style>` block** with CSS improvements — must NOT reproduce or rewrite any HTML content
 3. Lead agent injects the style block into the HTML `<head>` section
 
 **Invoke designer agent:**
@@ -693,57 +748,82 @@ Create a self-contained deliverable folder that can be shared as-is to stakehold
 
 **Distinction**: `data/F{NNN}/` is the workspace (authoritative, all tier files + assembled report). `data/F{NNN}/deliverable/` is a sharing snapshot — portable, self-contained, stakeholder-friendly.
 
-**Step 6.5a: Create deliverable structure**
-```bash
-mkdir -p data/F{NNN}/deliverable/figures/
-mkdir -p data/F{NNN}/deliverable/tiers/
+**Step 6.5a: Clean up previous run (idempotency) and create deliverable structure**
+```python
+import shutil
+deliverable_dir = Path(f'data/F{NNN}/deliverable')
+if deliverable_dir.exists():
+    shutil.rmtree(deliverable_dir)  # Remove stale files from previous run
+zip_path = Path(f'data/F{NNN}/F{NNN}_deliverable.zip')
+zip_path.unlink(missing_ok=True)
+
+deliverable_dir.mkdir(parents=True)
+Path(f'data/F{NNN}/deliverable/tiers').mkdir()
+# figures/ directory created conditionally in Step 6.5b (only if registry is non-empty)
 ```
 
 **Step 6.5b: Copy figures from registry**
 ```python
-import shutil
 figure_map = {}  # {original_path: deliverable_name}
-for entry in figure_registry:
-    src = entry['original_path']
-    dst_name = entry['deliverable_name']
-    if src in figure_map:
-        continue  # deduplicate: first-seen experiment wins
-    figure_map[src] = dst_name
-    shutil.copy2(src, f'data/F{{NNN}}/deliverable/figures/{dst_name}')
+if figure_registry:
+    Path(f'data/F{NNN}/deliverable/figures').mkdir(exist_ok=True)
+    for entry in figure_registry:
+        src = Path(entry['original_path'])
+        dst_name = entry['deliverable_name']
+        if str(src) in figure_map:
+            continue  # deduplicate: first-seen experiment wins
+        figure_map[str(src)] = dst_name
+        try:
+            shutil.copy2(str(src), f'data/F{NNN}/deliverable/figures/{dst_name}')
+        except FileNotFoundError:
+            print(f"WARNING: Figure missing at packaging time, skipping: {src}")
 ```
-**Zero-figure edge case**: If `figure_registry` is empty, omit the `figures/` directory entirely.
+**Zero-figure edge case**: If `figure_registry` is empty, `figures/` directory is not created. GUIDE.md omits the figures/ row (see step 6.5f).
 
 **Step 6.5c: Rewrite MD paths and copy report**
 ```python
-md_content = Path(f'data/F{{NNN}}/F{{NNN}}_report.md').read_text()
+md_content = Path(f'data/F{NNN}/F{NNN}_report.md').read_text()
+# Normalize path variants before replacement (./data/ vs data/)
 for original_path, deliverable_name in figure_map.items():
+    # Replace both normalized and ./ prefixed forms
     md_content = md_content.replace(original_path, f'figures/{deliverable_name}')
-# Warn if any unrewritten project-relative figure paths remain
-remaining = re.findall(r'data/[Ee]\d+/figures/\S+', md_content)
+    md_content = md_content.replace(f'./{original_path}', f'figures/{deliverable_name}')
+# Warn if any unrewritten project-relative figure paths remain (broad pattern)
+remaining = re.findall(r'data/[Ee]\d+/[^\s)]+\.(?:png|jpg|jpeg|gif|svg)', md_content)
 if remaining:
     print(f"WARNING: {len(remaining)} figure paths not rewritten: {remaining}")
-Path(f'data/F{{NNN}}/deliverable/F{{NNN}}_report.md').write_text(md_content)
+Path(f'data/F{NNN}/deliverable/F{NNN}_report.md').write_text(md_content)
 ```
 
-**Step 6.5d: Copy HTML and PDF** (already self-contained — no path rewriting needed)
-```bash
-cp data/F{NNN}/F{NNN}_report.html data/F{NNN}/deliverable/
-[ -f data/F{NNN}/F{NNN}_report.pdf ] && cp data/F{NNN}/F{NNN}_report.pdf data/F{NNN}/deliverable/
+**Step 6.5d: Copy HTML and PDF** (HTML is self-contained provided Phase 4 removed broken figure refs before conversion; verify HTML size > MD size as a proxy for successful Base64 embedding)
+```python
+shutil.copy2(f'data/F{NNN}/F{NNN}_report.html', f'data/F{NNN}/deliverable/')
+pdf_path = Path(f'data/F{NNN}/F{NNN}_report.pdf')
+has_pdf = pdf_path.exists() and pdf_path.stat().st_size > 0
+if has_pdf:
+    shutil.copy2(str(pdf_path), f'data/F{NNN}/deliverable/')
 ```
 
-**Step 6.5e: Copy tier source files verbatim** (no path rewriting — these are reference copies)
-```bash
-cp data/F{NNN}/tier{0,1,2,3}_*.md data/F{NNN}/deliverable/tiers/
+**Step 6.5e: Copy tier source files verbatim** (reference copies — workspace-relative paths remain intact)
+```python
+for tf in Path(f'data/F{NNN}').glob('tier*.md'):
+    shutil.copy2(str(tf), f'data/F{NNN}/deliverable/tiers/')
 ```
+**Note**: Tier files in `deliverable/tiers/` contain workspace-relative paths (`data/E{NNN}/...`) that resolve only in the original project directory. This asymmetry is documented in GUIDE.md (see step 6.5f).
 
 **Step 6.5f: Generate GUIDE.md**
 
-Select template based on `manifest_language` (Korean or English). Populate from Phase 0-5 computed data:
+Select template based on `manifest_language` (Korean or English). Populate from Phase 0-5 computed data. **Write to**: `data/F{NNN}/deliverable/GUIDE.md`.
 
+**English template:**
 ```markdown
 # {PROJECT_TITLE}: Experiment Synthesis Report {F_NUMBER}
 
-**Generated**: {DATE} | **Experiments**: {N} ({RANGE}) | **Version**: {F_NUMBER} v1.0
+**Generated**: {today} | **Experiments**: {EXPERIMENT_COUNT} ({RANGE}) | **Version**: {F_NUMBER} v1.0
+
+This package contains the complete synthesis report and all supporting materials.
+Open the HTML file for the best reading experience — it includes embedded images,
+a navigation bar, and collapsible sections.
 
 ---
 
@@ -763,10 +843,14 @@ Select template based on `manifest_language` (Korean or English). Populate from 
 | File | Description |
 |------|-------------|
 | `{F_NUMBER}_report.html` | **Open this.** Self-contained report with embedded images. |
+{%- if has_pdf %}
 | `{F_NUMBER}_report.pdf` | Print/archive version. |
+{%- endif %}
 | `{F_NUMBER}_report.md` | Source Markdown with relative figure paths. |
+{%- if figure_count > 0 %}
 | `figures/` | All referenced figures ({FIGURE_COUNT} images). |
-| `tiers/` | Individual tier source files (plain language, decision brief, evidence, technical). |
+{%- endif %}
+| `tiers/` | Individual tier source files (workspace-relative paths — for reference only). |
 
 ---
 
@@ -777,6 +861,7 @@ Select template based on `manifest_language` (Korean or English). Populate from 
 {EXPERIMENT_TABLE_ROWS}
 
 ---
+{%- if figure_count > 0 %}
 
 ## Figure Index
 
@@ -785,33 +870,102 @@ Select template based on `manifest_language` (Korean or English). Populate from 
 {FIGURE_TABLE_ROWS}
 
 ---
+{%- endif %}
 
-*Generated by exp-report plugin v{VERSION} on {DATE}.*
+*Generated by exp-report plugin v{PLUGIN_VERSION} on {today}.*
 ```
 
-**Korean template**: Use identical structure with Korean headers (`이 보고서 읽는 법`, `파일 목록`, `원본 실험`, `그림 목록`).
+**Korean template** (complete — all strings translated):
+```markdown
+# {PROJECT_TITLE}: 실험 통합 보고서 {F_NUMBER}
 
-**Step 6.5g: Create ZIP archive**
+**생성일**: {today} | **실험**: {EXPERIMENT_COUNT}건 ({RANGE}) | **버전**: {F_NUMBER} v1.0
+
+이 패키지는 통합 보고서와 모든 관련 자료를 포함합니다.
+HTML 파일을 열면 이미지 임베딩, 목차 탐색, 접이식 섹션이 포함된 최적의 읽기 환경을 제공합니다.
+
+---
+
+## 이 보고서 읽는 법
+
+| 역할 | 시작 위치 | 내용 |
+|------|----------|------|
+| 비전문가 | HTML 첫 섹션 | 전문용어 없는 요약 |
+| 의사결정자 | HTML 결정표 | 판단 + 핵심 수치 |
+| 연구자 / 검토자 | HTML 근거 서술 | 질문별 근거와 그림 |
+| 엔지니어 / 재현자 | HTML 기술 참조 (접기) | 파이프라인 사양, 교차 참조, 그림 갤러리 |
+
+---
+
+## 파일 목록
+
+| 파일 | 설명 |
+|------|------|
+| `{F_NUMBER}_report.html` | **이 파일을 여세요.** 이미지가 포함된 자체 완결형 보고서. |
+{%- if has_pdf %}
+| `{F_NUMBER}_report.pdf` | 인쇄/보관용 버전. |
+{%- endif %}
+| `{F_NUMBER}_report.md` | 상대 경로 그림 참조가 포함된 마크다운 원본. |
+{%- if figure_count > 0 %}
+| `figures/` | 참조된 모든 그림 ({FIGURE_COUNT}개). |
+{%- endif %}
+| `tiers/` | 개별 계층 원본 파일 (작업 디렉토리 기준 경로 — 참조용). |
+
+---
+
+## 원본 실험
+
+| 실험 | 설명 | 질문 |
+|------|------|------|
+{EXPERIMENT_TABLE_ROWS}
+
+---
+{%- if figure_count > 0 %}
+
+## 그림 목록
+
+| 파일 | 출처 | 질문 |
+|------|------|------|
+{FIGURE_TABLE_ROWS}
+
+---
+{%- endif %}
+
+*exp-report 플러그인 v{PLUGIN_VERSION}으로 {today}에 생성됨.*
+```
+
+**Conditional rows**: Use `has_pdf` (boolean from step 6.5d) and `figure_count` (from figure_map length) to conditionally include/exclude PDF and figures/ rows. The `{%- if ... %}` notation is pseudo-Jinja — implement as Python string conditionals.
+
+**Write instruction**:
+```python
+guide_content = ...  # populated template
+Path(f'data/F{NNN}/deliverable/GUIDE.md').write_text(guide_content, encoding='utf-8')
+```
+
+**Step 6.5g: Create ZIP archive** (with top-level wrapper directory so extraction is tidy)
 ```python
 import zipfile
-zip_path = Path(f'data/F{{NNN}}/F{{NNN}}_deliverable.zip')
+zip_path = Path(f'data/F{NNN}/F{NNN}_deliverable.zip')
+wrapper = f'F{NNN}_deliverable'  # top-level directory inside ZIP
 with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-    for f in Path(f'data/F{{NNN}}/deliverable').rglob('*'):
+    for f in Path(f'data/F{NNN}/deliverable').rglob('*'):
         if f.is_file():
-            zf.write(f, f.relative_to(Path(f'data/F{{NNN}}/deliverable')))
+            arcname = f'{wrapper}/{f.relative_to(Path(f"data/F{NNN}/deliverable"))}'
+            zf.write(f, arcname)
 ```
+This ensures extracting the ZIP creates a single `F{NNN}_deliverable/` folder rather than spilling files into the current directory.
 
 **Step 6.5h: Verify and compute stats**
 ```python
-deliverable_files = list(Path(f'data/F{{NNN}}/deliverable').rglob('*'))
+deliverable_files = list(Path(f'data/F{NNN}/deliverable').rglob('*'))
 file_count = sum(1 for f in deliverable_files if f.is_file())
 total_size_kb = sum(f.stat().st_size for f in deliverable_files if f.is_file()) / 1024
 figure_count = len(figure_map)
 zip_size_kb = zip_path.stat().st_size / 1024
 # Store for Phase 8 summary
 deliverable_stats = {
-    'path': f'data/F{{NNN}}/deliverable/',
-    'zip_path': f'data/F{{NNN}}/F{{NNN}}_deliverable.zip',
+    'path': f'data/F{NNN}/deliverable/',
+    'zip_path': f'data/F{NNN}/F{NNN}_deliverable.zip',
     'file_count': file_count, 'total_size_kb': total_size_kb,
     'figure_count': figure_count, 'zip_size_kb': zip_size_kb
 }
@@ -842,8 +996,8 @@ deliverable_stats = {
      deliverable: data/F{NNN}/deliverable/
      deliverable_zip: data/F{NNN}/F{NNN}_deliverable.zip
      status: final
-     description: "F{NNN} Integrated Report: 4-Tier synthesis of {N} experiments"
-     findings: "[Extract the first 2 sentences of the Tier 1 Executive Summary paragraph verbatim. Maximum 200 characters. Do not paraphrase.]"
+     description: "F{NNN} Integrated Report: 4-Tier synthesis of {EXPERIMENT_COUNT} experiments"
+     findings: "[Extract the first 2 sentences of the Tier 1 Executive Summary paragraph verbatim, truncated at 200 characters if necessary (add '...' suffix). Do not paraphrase.]"
      notes: "[HTML size, PDF size/pages, line count vs previous report]"
    ```
 
@@ -851,7 +1005,7 @@ deliverable_stats = {
    ```markdown
    ## {date}: F{NNN} generated (4-Tier Report)
    - **Structure**: Plain Language + Decision Brief + Evidence Narrative + Technical Reference
-   - **Source**: {N} final experiments ({range})
+   - **Source**: {EXPERIMENT_COUNT} final experiments ({range})
    - **Outputs**: MD + HTML + PDF
    - **Status**: final
    ```
@@ -900,26 +1054,6 @@ experiment-log: updated
 | 6.5 | Lead (you) | — | Figure registry + report files | deliverable/ + ZIP + GUIDE.md | — |
 | 7 | Lead (you) | — | All outputs | MANIFEST + log updated | — |
 | 8 | Lead (you) | — | — | Summary printed | — |
-
-## Numeric Verification Protocol
-
-After assembly, run this verification:
-
-1. **Extract Tier 1 numbers**: Parse Decision Table cells using this regex pattern:
-   ```
-   [-+]?\d+\.?\d*(?:[eE][-+]?\d+)?%?
-   ```
-   This matches: `90.5`, `86%`, `0.45`, `−0.220`, `1e-30`, `p<0.05`. **Exclude** from matching using context filters:
-   - Dates: skip numbers preceded by year context (e.g., `2024-01-15`)
-   - Section/figure numbers: skip `Figure N`, `Q1`, `D1`, `E001`
-   - Bootstrap/iteration counts: skip numbers in "N iterations/resamples" context
-   For ranges like `[0.81–1.00]`, extract both endpoints as separate numbers.
-2. **Search Tier 2**: For each extracted Tier 1 number, verify it appears **traceably** in Tier 2 text. Traceably means: exact match OR within rounding tolerance (e.g., `90.5%` matches `90.48%`; `0.053` matches `0.055` if both refer to the same metric with a note). Flag rounding differences > 5% relative for manual review.
-3. **Search Tier 0**: For each extracted Tier 1 number, verify it appears traceably in Tier 0 text (with plain-language context around technical terms)
-4. **Cross-check MANIFEST**: For each number in Tier 1, verify it traces to a MANIFEST `findings` or `notes` field (or normalized equivalent: `result`, `conclusion`)
-5. **Report**: List any orphaned numbers (in Tier 1 but not in Tier 2, Tier 0, or MANIFEST)
-
-If verification fails, patch Tier 2 to include missing numbers before proceeding to Phase 5.
 
 ## Anti-Patterns
 
