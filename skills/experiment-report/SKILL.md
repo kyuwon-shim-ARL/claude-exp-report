@@ -7,7 +7,7 @@ description: Generate multi-tier synthesis report from MANIFEST.yaml experiments
 
 ## CRITICAL: Mandatory Phase Execution
 
-**You MUST execute ALL 10 phases (0→1→2→3→4→5→6→6.5→7→8). DO NOT stop after Phase 4.**
+**You MUST execute ALL phases (0→1→2→3→[3.5]→4→5→6→6.5→7→8). DO NOT stop after Phase 4.** Phase 3.5 runs only when `dual_lang = True` (11 phases total); otherwise the standard 10-phase pipeline applies.
 
 The most common failure is stopping after MD assembly (Phase 4) without running HTML/PDF conversion (Phase 5). The report is NOT complete until HTML and PDF files exist on disk. If you skip Phase 5, the user gets only raw Markdown — this defeats the purpose of the plugin. Phase 4 is complete ONLY when Phase 5 has been executed and `F{NNN}_report.html` exists on disk.
 
@@ -52,7 +52,7 @@ bundle / share deliverables
 
 ### Phase 0: Pre-flight
 
-1. **Locate MANIFEST.yaml**: Search in order: `outputs/MANIFEST.yaml` → `MANIFEST.yaml` → prompt user. **Set `today`** = current date in `YYYY-MM-DD` format. **Set `PLUGIN_VERSION`** = `"1.10.0"`.
+1. **Locate MANIFEST.yaml**: Search in order: `outputs/MANIFEST.yaml` → `MANIFEST.yaml` → prompt user. **Set `today`** = current date in `YYYY-MM-DD` format. **Set `PLUGIN_VERSION`** = `"1.11.0"`. **Detect `--dual-lang` flag**: If the user's invocation message contains `--dual-lang` (case-insensitive substring match, same pattern as `--fast` in Phase 6), set `dual_lang = True`. Otherwise `dual_lang = False`. When `dual_lang = True`, both English and Korean versions of the report will be generated.
 2. **Filter experiments**: Extract only `status: final` entries. **Exclude synthesis/report entries** (keys matching `/^f\d+/i` such as f001, f002) — these are reports, not source experiments. **Mark superseded experiments**: If an experiment's `notes` or `findings` field indicates it was superseded (e.g., "superseded by E017"), flag it as `superseded: true` — it counts toward exhaustiveness but should be cited as `E010→E017 (superseded)` rather than discussed independently. **If 0 final source experiments remain after filtering, HALT and inform the user — do not proceed to Phase 1.** **If only 1-2 final source experiments remain, HALT — synthesis requires at least 3 experiments for meaningful MECE question clustering. Suggest the user finalize more experiments or use a simple summary instead.**
 3. **Normalize MANIFEST fields**: Not all projects use the same field names. Apply this normalization chain before proceeding:
    - `description` ← fall back to `title` if `description` is missing
@@ -67,6 +67,9 @@ bundle / share deliverables
    - **Never translate**: MANIFEST field values (experiment IDs, parameter names, numeric values), code blocks, file paths.
    - **Tier 0 exception**: Tier 0 uses `gloss_first` policy — English term preserved but must be defined on first use in Korean parentheses (e.g., "AUC(모델 성능 지표, 1.0이 최고) 0.92"). Subsequent uses may use the English term alone.
    When `manifest_language = "English"`, `term_policy` is not set (no action needed — all terms are already in English).
+   **Dual-language setup** (when `dual_lang = True`): Set `secondary_lang = "ko"` if `manifest_language == "English"`, else `"en"`. The primary report is generated in `manifest_language` (Phase 3, unchanged). Phase 3.5 translates all 4 tiers to `secondary_lang`. **Mixed-language MANIFEST restriction**: If `dual_lang = True` and the MANIFEST contains mixed-language experiments, HALT and inform the user — dual-language generation requires a homogeneous-language MANIFEST.
+   **"Never translate" rule clarification** (dual-lang context): The existing rule "Never translate: MANIFEST field values" applies to **identifiers** (experiment IDs, parameter names, numeric values, ALL-CAPS abbreviations, method names, units, code blocks, file paths). **Prose content** in `findings`/`description` fields may be translated to the secondary language by the Phase 3.5 translation agent. This distinction exists because identifiers must be traceable across versions, while prose is language-dependent by nature.
+   **Agent prompt injection** (dual-lang): In Phase 3 (primary report), agent prompts use `Language: {manifest_language}` as before. In Phase 3.5, the translation agent receives `Source language: {manifest_language} / Target language: {secondary_lang}`.
 5. **Build figure registry**: Collect figures from **two sources** (MANIFEST `outputs` field is primary, glob is supplementary):
    ```python
    SUPPORTED_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.svg'}
@@ -128,7 +131,7 @@ bundle / share deliverables
 6. **Auto-detect F-number**: Scan MANIFEST for existing `f###` entries (case-insensitive). Next number = max + 1. Format as `F{NNN}` (e.g., F004).
 7. **Check conversion scripts**: Look for `scripts/md_to_html.py` and `scripts/md_to_pdf.py`. If missing, generate them from embedded templates in Phase 5.
 8. **Create output directory**: `data/F{NNN}/`
-9. **Serialize computed data**: Save figure registry to `data/F{NNN}/figure_registry.json` (agents need this file as input). Save data registry to `data/F{NNN}/data_registry.json` (Phase 6.5 needs this for deliverable packaging). Save experiment summary to `data/F{NNN}/experiments.json` (experiment IDs, descriptions, findings, paths, superseded flags).
+9. **Serialize computed data**: Save figure registry to `data/F{NNN}/figure_registry.json` (agents need this file as input). Save data registry to `data/F{NNN}/data_registry.json` (Phase 6.5 needs this for deliverable packaging). Save experiment summary to `data/F{NNN}/experiments.json` (experiment IDs, descriptions, findings, paths, superseded flags). **Dual-lang config** (when `dual_lang = True`): Save `data/F{NNN}/config.json` with `{"dual_lang": true, "manifest_language": "...", "secondary_lang": "...", "term_policy": "..."}` — downstream phases read this to determine dual-lang behavior on resume.
 
 ### Phase 1: Question Discovery (hybrid)
 
@@ -223,6 +226,11 @@ For each confirmed question, extract an actionable decision:
 - Evidence cites experiment IDs (E001, E012, etc.)
 
 **Serialize**: Save Decision Table to `data/F{NNN}/decision_table.md`. Agent 1 reads this file.
+
+**Step 2.5 — Decision Table translation** (dual_lang only): Translate the Decision Table to `secondary_lang`. The lead agent performs this directly (no spawned subagent — it's 4-6 table rows):
+- **Translate columns**: Judgment (verdict prose) and Decision (topic noun phrase)
+- **Pass-through columns verbatim**: Evidence (experiment IDs) and Key Numbers (metrics, abbreviations, units — these remain in English regardless of target language per `term_policy`)
+- Save as `data/F{NNN}/decision_table_{secondary_lang}.md`. The canonical `decision_table.md` remains the primary-language authoritative version — do not rename or delete it.
 
 ### Phase 3: Tier Generation (3+1 agents)
 
@@ -398,9 +406,74 @@ for f in tier_files:
 ```
 If any file is missing, re-spawn the failed agent (max 2 retries per agent) before proceeding. If Agent 1 (Tier 1) failed, Agent 4 (Tier 0) cannot run — fix Agent 1 first.
 
+### Phase 3.5: Translation to Secondary Language (dual_lang only)
+
+**Skip this phase entirely if `dual_lang = False`.** This phase translates all 4 tier files from `manifest_language` to `secondary_lang`.
+
+**Spawn a single sonnet translation agent** with `subagent_type="general-purpose"`:
+
+```
+Agent(subagent_type="general-purpose", model="sonnet", prompt="
+You are translating a multi-tier experiment synthesis report from {manifest_language} to {secondary_lang}.
+
+Source language: {manifest_language}
+Target language: {secondary_lang}
+
+Input files (read ALL before translating):
+- data/F{NNN}/tier0_plain_language.md
+- data/F{NNN}/tier1_decision_brief.md
+- data/F{NNN}/tier2_evidence_narrative.md
+- data/F{NNN}/tier3_technical_reference.md
+- data/F{NNN}/decision_table_{secondary_lang}.md (pre-translated Decision Table from Phase 2.5)
+- data/F{NNN}/config.json (contains term_policy)
+
+Also read the MANIFEST.yaml to access original findings/notes fields for verbatim reference.
+
+Output files:
+- data/F{NNN}/tier0_plain_language_{secondary_lang}.md
+- data/F{NNN}/tier1_decision_brief_{secondary_lang}.md
+- data/F{NNN}/tier2_evidence_narrative_{secondary_lang}.md
+- data/F{NNN}/tier3_technical_reference_{secondary_lang}.md
+- data/F{NNN}/questions_{secondary_lang}.json (translate question text only; preserve experiment_ids, arc_label)
+
+Translation rules:
+1. NUMBER-LOCK: Every numeric value must appear IDENTICALLY in the translated output.
+   Use this regex to identify numbers: (?<!\d)[-+]?\d[\d,]*\.?\d*(?:[eE][-+]?\d+)?%?
+   Do not round, reformat, or omit any number.
+
+2. TERM PRESERVATION (target=Korean): Preserve English for ALL-CAPS abbreviations (AUC, CI, ROC),
+   capitalized method names (Lasso, Random Forest), units (uM, mg/kg), and any term appearing
+   in English in the MANIFEST findings/notes fields. Write surrounding prose in Korean.
+
+3. TERM PRESERVATION (target=English): Translate Korean prose to English. Strip Korean
+   parenthetical glosses using pattern: remove (Korean_text) where Korean_text contains
+   Hangul characters (U+AC00-U+D7A3). Keep the English term preceding the parenthetical.
+
+4. TIER 0 SPECIAL HANDLING:
+   - When target=Korean: Apply gloss_first — preserve English technical terms, add Korean
+     parenthetical definition on FIRST use only (e.g., 'AUC(모델 성능 지표, 1.0이 최고) 0.92').
+     This is a STRUCTURAL REWRITE of Tier 0, not a mechanical translation.
+   - When target=English: Rewrite Korean plain-language explanations into English plain language.
+     Remove any gloss_first parentheticals. Match the style: 'no jargon, no assuming domain knowledge'.
+
+5. TIER 1 Decision Table: Use the pre-translated table from decision_table_{secondary_lang}.md.
+   Do NOT re-translate — copy it verbatim into the Tier 1 output.
+
+6. NEVER TRANSLATE: Experiment IDs (E001), file paths, code blocks, figure references,
+   table structure (pipe syntax), markdown formatting.
+
+7. FIGURE CAPTIONS: Translate caption text but preserve figure paths verbatim.
+
+After translating, verify: count all numbers in each source tier file and confirm the
+same count appears in the corresponding translated file. Report any discrepancies.
+")
+```
+
+**Phase 3.5 Exit Criterion**: Verify ALL 4 translated tier files + `questions_{secondary_lang}.json` exist and are non-empty. Spot-check: translated Tier 1 Decision Table numbers match primary Tier 1 numbers.
+
 ### Phase 4: Assembly + Verification
 
-1. **Concatenate**: Read tier0, tier1, tier2, tier3 files → assemble into `F{NNN}_report.md`
+1. **Concatenate**: Read tier0, tier1, tier2, tier3 files → assemble into `F{NNN}_report.md`. **Dual-lang**: Also assemble secondary-language tier files → `F{NNN}_report_{secondary_lang}.md` using the same template structure. Rename the primary report to `F{NNN}_report_{manifest_lang_code}.md` (where `manifest_lang_code` = `"en"` or `"ko"`).
 
    ```markdown
    # [Project Title]: [Report Subtitle]
@@ -447,6 +520,10 @@ If any file is missing, re-spawn the failed agent (max 2 retries per agent) befo
 
    **Step 2e — Report**: List any orphaned numbers (in Tier 1 but not in Tier 2, Tier 0, or MANIFEST)
 
+   **Step 2f — Cross-language reconciliation** (dual_lang only): Compare the set of numbers extracted from the primary report with those from the secondary report. Flag any number present in one but not the other (symmetric difference). Exclude numbers inside Korean `gloss_first` parentheticals from the comparison — these are definitional (e.g., "1.0" in "1.0이 최고") and not statistical values. If discrepancies are found, patch the secondary report to match the primary.
+
+   **Korean gloss masking** (dual_lang, Korean files): Before running Steps 2b/2c on Korean (`_ko`) files, mask `gloss_first` parentheticals to avoid false-positive orphaned numbers. Use regex: `\((?=[^)]*[\uac00-\ud7a3])[^)]+\)` to match any parenthetical containing Hangul characters. Replace matched parentheticals with empty string before number extraction. Apply masking to Steps 2a and 2c when processing Korean files — Tier 0 uses `gloss_first` most frequently, but Korean Tier 1 Judgment cells may also contain inline parenthetical clarifications.
+
    If verification fails, patch Tier 2 to include missing numbers before proceeding to Phase 5.
 
 3. **Figure path verification**:
@@ -455,11 +532,11 @@ If any file is missing, re-spawn the failed agent (max 2 retries per agent) befo
    - **If a path is broken**: remove the figure reference from the report and log a warning. Do not block Phase 5 for broken figures, but report them in Phase 8 summary.
 
 4. **Save all files** to `data/F{NNN}/`:
-   - `F{NNN}_report.md` (assembled)
-   - `tier0_plain_language.md`
-   - `tier1_decision_brief.md`
-   - `tier2_evidence_narrative.md`
-   - `tier3_technical_reference.md`
+   - `F{NNN}_report.md` (assembled) — or `F{NNN}_report_en.md` + `F{NNN}_report_ko.md` when `dual_lang = True`
+   - `tier0_plain_language.md` (+ `tier0_plain_language_{secondary_lang}.md` when dual_lang)
+   - `tier1_decision_brief.md` (+ `tier1_decision_brief_{secondary_lang}.md` when dual_lang)
+   - `tier2_evidence_narrative.md` (+ `tier2_evidence_narrative_{secondary_lang}.md` when dual_lang)
+   - `tier3_technical_reference.md` (+ `tier3_technical_reference_{secondary_lang}.md` when dual_lang)
 
 ### Phase 5: Conversion (HTML + PDF) — MANDATORY
 
@@ -485,6 +562,41 @@ python scripts/md_to_html.py data/F{NNN}/F{NNN}_report.md &
 python scripts/md_to_pdf.py data/F{NNN}/F{NNN}_report.md &
 wait
 ```
+**Dual-lang Step 5c**: When `dual_lang = True`, convert both language reports. First, run a CJK font pre-flight check for Korean PDF:
+```python
+# CJK font pre-check (before launching parallel conversions)
+ko_pdf_skipped = False
+try:
+    import fitz
+    # Test render a Korean character to verify CJK font availability
+    doc = fitz.open(); page = doc.new_page()
+    rc = page.insert_text((72, 72), "한글테스트", fontsize=11)
+    if rc <= 0:
+        print("WARNING: CJK font not available for PDF rendering. Korean PDF will be skipped.")
+        ko_pdf_skipped = True
+    doc.close()
+except Exception:
+    ko_pdf_skipped = True
+```
+Then launch parallel conversions:
+```bash
+python scripts/md_to_html.py data/F{NNN}/F{NNN}_report_en.md &
+python scripts/md_to_html.py data/F{NNN}/F{NNN}_report_ko.md &
+python scripts/md_to_pdf.py data/F{NNN}/F{NNN}_report_en.md &
+# Only launch KO PDF if CJK fonts available
+if [ "$KO_PDF_SKIPPED" != "true" ]; then
+    python scripts/md_to_pdf.py data/F{NNN}/F{NNN}_report_ko.md &
+fi
+wait
+```
+**Korean HTML font stack**: After conversion, prepend CJK fonts to the Korean HTML `<style>` body rule:
+```python
+if dual_lang:
+    ko_html = Path(f'data/F{NNN}/F{NNN}_report_ko.html').read_text()
+    ko_font_css = "<style>body { font-family: 'Noto Sans KR', 'Malgun Gothic', 'Apple SD Gothic Neo', system-ui, sans-serif; }</style>"
+    ko_html = ko_html.replace('</head>', f'{ko_font_css}\n</head>')
+    Path(f'data/F{NNN}/F{NNN}_report_ko.html').write_text(ko_html)
+```
 
 **Step 5d: Verify outputs (MUST check before proceeding)**
 ```bash
@@ -495,6 +607,7 @@ ls -la data/F{NNN}/F{NNN}_report.html data/F{NNN}/F{NNN}_report.pdf 2>&1
 - If HTML is missing or empty → **STOP and debug** (check script output for errors)
 - **Content-quality spot-check**: If the source MD contains pipe-table syntax (`|...|`), verify `<table>` appears in the HTML output. If not, the fallback failed to convert tables — install `markdown` package and retry.
 - If PDF is missing → log warning but continue (PDF requires PyMuPDF)
+- **Dual-lang Step 5d**: Verify both `_en.html` and `_ko.html` exist and size > 0. For KO PDF: if `ko_pdf_skipped = True`, the absence is expected (log "Korean PDF skipped: CJK font unavailable") — do not treat as failure.
 
 #### Embedded Conversion Script Templates
 
@@ -770,6 +883,17 @@ html = Path('data/F{NNN}/F{NNN}_report.html').read_text()
 html = html.replace('</head>', f'{designer_css}\n</head>')
 Path('data/F{NNN}/F{NNN}_report.html').write_text(html)
 ```
+**Dual-lang injection order** (when `dual_lang = True`):
+1. Designer agent reads and generates CSS from the EN HTML only (single agent run)
+2. Inject designer CSS into BOTH `_en.html` and `_ko.html`
+3. AFTER designer CSS, append Korean typography addendum to `_ko.html` ONLY:
+```python
+ko_typography = "<style>/* Korean typography */\nbody { word-break: keep-all; line-height: 1.75; }\n</style>"
+ko_html = Path(f'data/F{NNN}/F{NNN}_report_ko.html').read_text()
+ko_html = ko_html.replace('</head>', f'{ko_typography}\n</head>')
+Path(f'data/F{NNN}/F{NNN}_report_ko.html').write_text(ko_html)
+```
+The cascade order matters: designer CSS first, then KO addendum — the addendum's `line-height: 1.75` intentionally overrides the designer's `line-height >= 1.6` for Korean readability. Do NOT inject the KO addendum into the EN HTML.
 
 **If oh-my-claudecode is installed**, prefer `subagent_type="oh-my-claudecode:designer"` with the same CSS-only constraint.
 
@@ -841,26 +965,43 @@ if data_registry:
 
 **Step 6.5d: Rewrite MD paths and copy report**
 ```python
-md_content = Path(f'data/F{NNN}/F{NNN}_report.md').read_text()
-# Normalize path variants before replacement (./data/ vs data/)
-for original_path, deliverable_name in figure_map.items():
-    # Replace both normalized and ./ prefixed forms
-    md_content = md_content.replace(original_path, f'figures/{deliverable_name}')
-    md_content = md_content.replace(f'./{original_path}', f'figures/{deliverable_name}')
-# Warn if any unrewritten project-relative figure paths remain (broad pattern)
-remaining = re.findall(r'data/[Ee]\d+/[^\s)]+\.(?:png|jpg|jpeg|gif|svg)', md_content)
-if remaining:
-    print(f"WARNING: {len(remaining)} figure paths not rewritten: {remaining}")
-Path(f'data/F{NNN}/deliverable/F{NNN}_report.md').write_text(md_content)
+# Determine report files to process
+report_files = [f'data/F{NNN}/F{NNN}_report.md']
+if dual_lang:
+    report_files = [f'data/F{NNN}/F{NNN}_report_en.md', f'data/F{NNN}/F{NNN}_report_ko.md']
+
+for report_path in report_files:
+    md_content = Path(report_path).read_text()
+    # Normalize path variants before replacement (./data/ vs data/)
+    for original_path, deliverable_name in figure_map.items():
+        # Replace both normalized and ./ prefixed forms
+        md_content = md_content.replace(original_path, f'figures/{deliverable_name}')
+        md_content = md_content.replace(f'./{original_path}', f'figures/{deliverable_name}')
+    # Warn if any unrewritten project-relative figure paths remain (broad pattern)
+    remaining = re.findall(r'data/[Ee]\d+/[^\s)]+\.(?:png|jpg|jpeg|gif|svg)', md_content)
+    if remaining:
+        print(f"WARNING: {len(remaining)} figure paths not rewritten: {remaining}")
+    out_name = Path(report_path).name
+    Path(f'data/F{NNN}/deliverable/{out_name}').write_text(md_content)
 ```
 
 **Step 6.5e: Copy HTML and PDF** (HTML is self-contained provided Phase 4 removed broken figure refs before conversion; verify HTML size > MD size as a proxy for successful Base64 embedding)
 ```python
-shutil.copy2(f'data/F{NNN}/F{NNN}_report.html', f'data/F{NNN}/deliverable/')
-pdf_path = Path(f'data/F{NNN}/F{NNN}_report.pdf')
-has_pdf = pdf_path.exists() and pdf_path.stat().st_size > 0
-if has_pdf:
-    shutil.copy2(str(pdf_path), f'data/F{NNN}/deliverable/')
+if dual_lang:
+    for lang in ['en', 'ko']:
+        html_src = Path(f'data/F{NNN}/F{NNN}_report_{lang}.html')
+        if html_src.exists():
+            shutil.copy2(str(html_src), f'data/F{NNN}/deliverable/')
+        pdf_src = Path(f'data/F{NNN}/F{NNN}_report_{lang}.pdf')
+        if pdf_src.exists() and pdf_src.stat().st_size > 0:
+            shutil.copy2(str(pdf_src), f'data/F{NNN}/deliverable/')
+    has_pdf = Path(f'data/F{NNN}/F{NNN}_report_en.pdf').exists()
+else:
+    shutil.copy2(f'data/F{NNN}/F{NNN}_report.html', f'data/F{NNN}/deliverable/')
+    pdf_path = Path(f'data/F{NNN}/F{NNN}_report.pdf')
+    has_pdf = pdf_path.exists() and pdf_path.stat().st_size > 0
+    if has_pdf:
+        shutil.copy2(str(pdf_path), f'data/F{NNN}/deliverable/')
 ```
 
 **Step 6.5f: Copy tier source files verbatim** (reference copies — workspace-relative paths remain intact)
@@ -872,7 +1013,7 @@ for tf in Path(f'data/F{NNN}').glob('tier*.md'):
 
 **Step 6.5g: Generate GUIDE.md**
 
-Select template based on `manifest_language` (Korean or English). Populate from Phase 0-5 computed data. **Write to**: `data/F{NNN}/deliverable/GUIDE.md`.
+Select template based on `manifest_language` (Korean or English). Populate from Phase 0-5 computed data. **Write to**: `data/F{NNN}/deliverable/GUIDE.md`. **Dual-lang**: Use a bilingual GUIDE.md — combine both language templates with a Language Versions table at the top and anchor links (`[English](#how-to-read-this-report)` / `[한국어](#이-보고서-읽는-법)`). Update file table rows to list both `_en` and `_ko` HTML/PDF/MD files.
 
 **English template:**
 ```markdown
@@ -1088,10 +1229,10 @@ deliverable_stats = {
      params:
        structure: "4-Tier (Plain Language + Decision Brief + Evidence Narrative + Technical Reference)"
        source: "MANIFEST final experiments, restructured"
-     outputs:
-       - data/F{NNN}/F{NNN}_report.md
-       - data/F{NNN}/F{NNN}_report.html
-       - data/F{NNN}/F{NNN}_report.pdf
+     outputs:  # dual_lang: use _en/_ko suffixed filenames instead of unsuffixed
+       - data/F{NNN}/F{NNN}_report.md  # or _en.md + _ko.md
+       - data/F{NNN}/F{NNN}_report.html  # or _en.html + _ko.html
+       - data/F{NNN}/F{NNN}_report.pdf  # or _en.pdf + _ko.pdf
        - data/F{NNN}/tier0_plain_language.md
        - data/F{NNN}/tier1_decision_brief.md
        - data/F{NNN}/tier2_evidence_narrative.md
@@ -1101,6 +1242,7 @@ deliverable_stats = {
      deliverable: data/F{NNN}/deliverable/
      deliverable_zip: data/F{NNN}/F{NNN}_deliverable.zip
      status: final
+     lang: [en, ko]  # dual_lang only — omit this field for single-language reports. Describes output formats, NOT input MANIFEST language. Must not be used for manifest_language detection in Phase 0.
      description: "F{NNN} Integrated Report: 4-Tier synthesis of {EXPERIMENT_COUNT} experiments"
      findings: "[Extract the first 2 sentences of the Tier 1 Executive Summary paragraph verbatim, truncated at 200 characters if necessary (add '...' suffix). Do not paraphrase.]"
      notes: "[HTML size, PDF size/pages, line count, data: {data_file_count} files]"
@@ -1142,6 +1284,24 @@ Verification:  {pass/fail} — {details}
 MANIFEST:      updated
 experiment-log: updated
 ```
+**Dual-lang Phase 8 extension**: When `dual_lang = True`, show per-language stats:
+```
+Languages:     EN + KO (dual-language mode)
+
+EN Report:
+  Assembled: data/F{NNN}/F{NNN}_report_en.md ({lines} lines)
+  HTML:      data/F{NNN}/F{NNN}_report_en.html ({size} KB)
+  PDF:       data/F{NNN}/F{NNN}_report_en.pdf ({size} KB, {pages} pages)
+
+KO Report:
+  Assembled: data/F{NNN}/F{NNN}_report_ko.md ({lines} lines)
+  HTML:      data/F{NNN}/F{NNN}_report_ko.html ({size} KB)
+  PDF:       data/F{NNN}/F{NNN}_report_ko.pdf ({size} KB) — or "Skipped: CJK font unavailable"
+
+Verification (EN): {pass/fail}
+Verification (KO): {pass/fail}
+Cross-language:    {pass/fail} — {number reconciliation details}
+```
 
 ## Agent Dispatch Table
 
@@ -1154,7 +1314,9 @@ experiment-log: updated
 | 3c | agent-3 | haiku | MANIFEST + figures | tier3_technical_reference.md | 60-100 |
 | 3d | agent-4 | sonnet | Tier 1 + MANIFEST descriptions | tier0_plain_language.md | 20-30 |
 | | | | *(sequential after 3a)* | | |
-| 4 | Lead (you) | — | 4 tier files | F{NNN}_report.md | — |
+| 3.5 | agent-5 | sonnet | 4 tier files + MANIFEST | 4 translated tier files | — |
+| | | | *(dual_lang only)* | + questions_{secondary}.json | |
+| 4 | Lead (you) | — | 4 (or 8) tier files | F{NNN}_report.md (or _en + _ko) | — |
 | 5 | Bash (parallel) | — | MD file | HTML + PDF | — |
 | 6 | designer | sonnet | HTML file | Improved HTML (CSS/layout only) | — |
 | 6.5 | Lead (you) | — | Figure + data registries + report files | deliverable/ + ZIP + GUIDE.md | — |
@@ -1182,6 +1344,16 @@ experiment-log: updated
 | Embedding large Base64 images without size guard | Reports with 20+ experiments produce >10MB HTML that degrades browser performance | If total figure registry exceeds 10MB, warn the user and consider linking external images instead of embedding |
 | Using "significantly" with p ≥ 0.05 | Incorrect statistical language misleads readers | Scan Tier 2 for "significantly" and verify adjacent p-value is < 0.05; use "practical improvement (p=X, n.s.)" otherwise |
 | Translating technical terms to Korean | Readers lose the ability to search, reference, or compare with English-language literature; translated terms like "곡선하면적" are unrecognizable | Preserve English for ALL-CAPS abbreviations, method names, units, and MANIFEST verbatim values; add Korean gloss in parentheses on first use for Tier 0 only |
+| Skipping CJK font check before KO PDF generation | PyMuPDF silently renders Korean as replacement rectangles (tofu); PDF passes `size > 0` check but is unreadable | Run CJK font pre-flight before KO PDF conversion; set `ko_pdf_skipped = True` and skip KO PDF if unavailable |
+| Assuming gloss_first parentheticals pass number regex unchanged | Korean glosses like `AUC(모델 성능 지표, 1.0이 최고)` introduce `1.0` as a false orphaned number in Phase 4 verification | Mask gloss_first parentheticals containing Hangul before Step 2a/2c number extraction |
+| Translating assembled report instead of individual tiers | Assembled report loses tier structure during translation; gloss_first and term_policy formatting differ by tier | Phase 3.5 translates individual tier files — never translate the assembled `F{NNN}_report.md` |
+| Running designer agent twice (once per language HTML) | 2x API cost for negligible gain — CSS rules are 95% language-agnostic | Run designer ONCE on EN HTML; inject shared CSS into both; append KO typography addendum to KO only |
+| Duplicating figures/ directory per language in deliverable | Storage waste — both language reports reference the same figures | Single shared `figures/` directory in deliverable; both `_en` and `_ko` HTML embed the same Base64 images |
+| Creating two f{nnn} MANIFEST entries for one dual-lang report | Breaks Phase 0 F-number auto-detection (`max + 1` logic) | Single `f{nnn}` entry with `lang: [en, ko]` field |
+| Injecting KO typography addendum into EN HTML | `word-break: keep-all` and `line-height: 1.75` degrade English typography | KO addendum targets `_ko.html` ONLY — verify EN HTML does not contain `word-break: keep-all` |
+| Missing `_en`/`_ko` suffix on deliverable MD files | Both language versions share the same filename; second copy silently overwrites first | Always use `_en`/`_ko` suffixes on all dual-lang output files |
+| Creating two separate ZIPs for dual-lang deliverable | Incomplete individual archives — both lack the other language version | Single ZIP containing both language versions with shared figures/ and data/ |
+| Monolingual GUIDE.md for dual-lang deliverable | Reader cannot find the other language version or understand the dual-lang structure | Bilingual GUIDE.md with Language Versions table and anchor links to each language section |
 
 ## Verification Checklist
 
@@ -1208,6 +1380,16 @@ Before declaring completion, verify **ALL** of the following. **If any REQUIRED 
 - [ ] No symlinks in data_registry entries (all entries pass `not Path.is_symlink()`)
 - [ ] Korean reports: technical terms preserved in English (AUC not 곡선하면적, p-value not p값) with `gloss_first` applied in Tier 0
 - [ ] Korean reports: MANIFEST `findings` field values appear verbatim (not translated)
+- [ ] **Dual-lang** (when `dual_lang = True`):
+- [ ] Both `F{NNN}_report_en.html` and `F{NNN}_report_ko.html` exist and size > 0
+- [ ] Korean HTML contains CJK `font-family` declaration in `<style>` block (prepended before `system-ui`)
+- [ ] MANIFEST `f{nnn}` entry has `lang: [en, ko]` field
+- [ ] GUIDE.md contains both English (`## How to Read`) and Korean (`## 이 보고서 읽는 법`) section headings
+- [ ] KO report MD contains Korean Unicode characters (U+AC00-U+D7A3 present — guards against copying EN as KO)
+- [ ] EN HTML does NOT contain `word-break: keep-all` (guards against KO addendum injected into EN)
+- [ ] MANIFEST `f{nnn}` outputs list contains both `_en.html` and `_ko.html` filenames
+- [ ] ZIP contains both `*_en.html` and `*_ko.html` at the top-level wrapper directory
+- [ ] Phase 4 numeric verification completed on BOTH language MD files (with gloss masking for KO Tier 0)
 - [ ] `F{NNN}_deliverable.zip` exists and size > 0 bytes
 
 **FAIL-SAFE**: If you reach Phase 8 without HTML output, STOP. Go back to Phase 5 and generate it.
