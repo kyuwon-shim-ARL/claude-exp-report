@@ -52,7 +52,7 @@ bundle / share deliverables
 
 ### Phase 0: Pre-flight
 
-1. **Locate MANIFEST.yaml**: Search in order: `outputs/MANIFEST.yaml` → `MANIFEST.yaml` → prompt user. **Set `today`** = current date in `YYYY-MM-DD` format. **Set `PLUGIN_VERSION`** = `"1.9.0"`.
+1. **Locate MANIFEST.yaml**: Search in order: `outputs/MANIFEST.yaml` → `MANIFEST.yaml` → prompt user. **Set `today`** = current date in `YYYY-MM-DD` format. **Set `PLUGIN_VERSION`** = `"1.10.0"`.
 2. **Filter experiments**: Extract only `status: final` entries. **Exclude synthesis/report entries** (keys matching `/^f\d+/i` such as f001, f002) — these are reports, not source experiments. **Mark superseded experiments**: If an experiment's `notes` or `findings` field indicates it was superseded (e.g., "superseded by E017"), flag it as `superseded: true` — it counts toward exhaustiveness but should be cited as `E010→E017 (superseded)` rather than discussed independently. **If 0 final source experiments remain after filtering, HALT and inform the user — do not proceed to Phase 1.** **If only 1-2 final source experiments remain, HALT — synthesis requires at least 3 experiments for meaningful MECE question clustering. Suggest the user finalize more experiments or use a simple summary instead.**
 3. **Normalize MANIFEST fields**: Not all projects use the same field names. Apply this normalization chain before proceeding:
    - `description` ← fall back to `title` if `description` is missing
@@ -61,6 +61,12 @@ bundle / share deliverables
    - When an output entry is a bare filename (no path separator), resolve as `{path}/{filename}`
    Log which fields were normalized and continue — do not fail on missing canonical field names. **Escalation**: If ALL experiments required `findings` fallback to `description`, warn the user that the Decision Table will contain descriptions rather than empirical findings.
 4. **Detect MANIFEST language**: Inspect the `description` fields of the first 3 experiments. If majority are Korean → set `manifest_language = "Korean"`. If majority are English → `"English"`. For mixed cases, default to the language of the first experiment and log a note. **Propagation mechanism**: Include `manifest_language` as an explicit variable in every agent prompt by prepending `Language: {manifest_language}` to each agent's Input section. Do NOT rely on agents to auto-detect language from content — explicit injection ensures consistency across all 4 tiers.
+   **Technical term policy**: When `manifest_language = "Korean"`, set `term_policy = "preserve_technical_english"`. This policy instructs agents to write prose in Korean but preserve English for technical terms. The term boundary is **rule-based** (not an exhaustive list):
+   - **Always preserve in English**: ALL-CAPS abbreviations (AUC, CI, ROC, GBM, IC50, EC50), capitalized method names (Lasso, Random Forest, XGBoost) and established English-only method terms used as technical vocabulary (logistic regression, support vector machine), SI units and scientific notation (uM, mg/kg, log₁₀), hyphenated compounds where one part is an abbreviation (p-value, dose-response, Hill coefficient), and any term appearing verbatim in English in the MANIFEST `findings` or `notes` fields.
+   - **Korean equivalents acceptable**: Common nouns with established Korean scientific equivalents (accuracy/정확도, sensitivity/민감도, specificity/특이도) — agents should prefer the English term when adjacent to a metric value for scannability (e.g., "AUC 0.92, sensitivity 87%"), but Korean equivalents are acceptable in pure prose context.
+   - **Never translate**: MANIFEST field values (experiment IDs, parameter names, numeric values), code blocks, file paths.
+   - **Tier 0 exception**: Tier 0 uses `gloss_first` policy — English term preserved but must be defined on first use in Korean parentheses (e.g., "AUC(모델 성능 지표, 1.0이 최고) 0.92"). Subsequent uses may use the English term alone.
+   When `manifest_language = "English"`, `term_policy` is not set (no action needed — all terms are already in English).
 5. **Build figure registry**: Collect figures from **two sources** (MANIFEST `outputs` field is primary, glob is supplementary):
    ```python
    SUPPORTED_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.svg'}
@@ -251,6 +257,7 @@ Constraints:
 - Every number must trace to MANIFEST `findings` or `notes` fields
 - Maximum 30 lines total
 - Write in {manifest_language}
+- Term policy (Korean): Preserve English for technical terms — ALL-CAPS abbreviations (AUC, CI, ROC, GBM), method names (Lasso, Random Forest, XGBoost), units (uM, mg/kg), and terms appearing in English in MANIFEST `findings`/`notes`. Write surrounding prose in Korean. Never translate MANIFEST field values, experiment IDs, or code blocks.
 - Use project-relative paths for any file references (e.g., `data/E001/figures/plot.png`)
 ```
 
@@ -290,6 +297,7 @@ Constraints:
 - If an experiment appears in multiple questions, discuss only the aspect
   relevant to the current question (do not repeat the same analysis)
 - Write in {manifest_language}
+- Term policy (Korean): Preserve English for technical terms — ALL-CAPS abbreviations (AUC, CI, ROC, GBM), method names (Lasso, Random Forest, XGBoost), units (uM, mg/kg), and terms appearing in English in MANIFEST `findings`/`notes`. Write surrounding prose in Korean. Never translate MANIFEST field values, experiment IDs, or code blocks.
 - Use project-relative paths for all figure references (e.g., `data/E001/figures/plot.png` — not absolute paths, not report-relative)
 - If multiple formal hypothesis tests are cited across questions, note the total count and whether family-wise error rate correction (e.g., Holm, Bonferroni) was applied
 - Scan for statistical language consistency: do not use "significantly" unless the cited p-value is < 0.05; use "practical improvement" or "non-significant trend" for p ≥ 0.05
@@ -335,6 +343,7 @@ Constraints:
 - Figure paths must be valid (from registry)
 - No narrative — this is reference material only
 - Write in {manifest_language}
+- Term policy (Korean): Preserve English for technical terms — ALL-CAPS abbreviations (AUC, CI, ROC, GBM), method names (Lasso, Random Forest, XGBoost), units (uM, mg/kg), and terms appearing in English in MANIFEST `findings`/`notes`. Write surrounding prose in Korean. Never translate MANIFEST field values, experiment IDs, or code blocks.
 - Use project-relative paths for all figure and source references
 ```
 
@@ -364,11 +373,12 @@ Structure:
 
 Constraints:
 - Every number from Tier 1 must appear identically in Tier 0
-- NO acronyms unless immediately defined in parentheses on first use
+- NO acronyms unless immediately defined on first use — for Korean output, apply `gloss_first`: preserve the English acronym as the primary form with a Korean parenthetical (e.g., "AUC(모델 성능 지표, 1.0이 최고) 0.92"); for English output, spell out on first use with acronym in parentheses
 - NO assuming domain knowledge — explain as if to a smart generalist
 - Keep the same structure and conclusions as Tier 1, only change the language
 - Maximum 30 lines total
 - Match the language of the MANIFEST content (Korean → Korean, English → English)
+- Term policy (Korean): Use `gloss_first` — preserve English technical terms verbatim but define each on first use with a Korean parenthetical (e.g., "AUC(모델 성능 지표, 1.0이 최고) 0.92", "EC50(반수 효과 농도)"). After first definition, use the English term alone. Applies to ALL-CAPS abbreviations (AUC, CI, ROC), method names (Lasso, Random Forest), units (uM, mg/kg), and any term appearing in English in MANIFEST fields. Do NOT translate these terms to Korean — only add a parenthetical gloss on first use.
 ```
 
 **Phase 3 Exit Criterion**: Before proceeding to Phase 4, verify ALL 4 tier files exist and are non-empty:
@@ -427,6 +437,7 @@ If any file is missing, re-spawn the failed agent (max 2 retries per agent) befo
    - Compound identifiers: skip numbers inside `[A-Z]{2,}\d+` patterns (EC50, IC50, LD50)
    - Contextual counts: skip "N-fold", "N features", "N variables", "N minutes", "N iterations", "N resamples"
    - Bootstrap/iteration counts: skip numbers in "N iterations/resamples" context
+   - Korean numeral multipliers: skip numbers followed by Korean multiplier suffixes (만, 억, 조) — these are informal magnitude indicators, not statistical values
 
    **Step 2b — Search Tier 2**: For each extracted Tier 1 number, verify it appears **traceably** in Tier 2 text. Traceably means: exact match OR within rounding tolerance (e.g., `90.5%` matches `90.48%`). Handle percentage/decimal equivalence: `0.905` matches `90.5%`. Flag rounding differences > 5% relative for manual review.
 
@@ -1170,6 +1181,7 @@ experiment-log: updated
 | Designer agent rewriting full HTML | Base64-encoded images get silently corrupted by line truncation | Use CSS-extraction pattern: agent outputs `<style>` block only |
 | Embedding large Base64 images without size guard | Reports with 20+ experiments produce >10MB HTML that degrades browser performance | If total figure registry exceeds 10MB, warn the user and consider linking external images instead of embedding |
 | Using "significantly" with p ≥ 0.05 | Incorrect statistical language misleads readers | Scan Tier 2 for "significantly" and verify adjacent p-value is < 0.05; use "practical improvement (p=X, n.s.)" otherwise |
+| Translating technical terms to Korean | Readers lose the ability to search, reference, or compare with English-language literature; translated terms like "곡선하면적" are unrecognizable | Preserve English for ALL-CAPS abbreviations, method names, units, and MANIFEST verbatim values; add Korean gloss in parentheses on first use for Tier 0 only |
 
 ## Verification Checklist
 
@@ -1194,6 +1206,8 @@ Before declaring completion, verify **ALL** of the following. **If any REQUIRED 
 - [ ] `deliverable/data/` contains `{data_file_count}` files matching data_registry (or absent if data_file_count == 0)
 - [ ] GUIDE.md "Source Data Files" / "원본 데이터 파일" section present IFF data_file_count > 0
 - [ ] No symlinks in data_registry entries (all entries pass `not Path.is_symlink()`)
+- [ ] Korean reports: technical terms preserved in English (AUC not 곡선하면적, p-value not p값) with `gloss_first` applied in Tier 0
+- [ ] Korean reports: MANIFEST `findings` field values appear verbatim (not translated)
 - [ ] `F{NNN}_deliverable.zip` exists and size > 0 bytes
 
 **FAIL-SAFE**: If you reach Phase 8 without HTML output, STOP. Go back to Phase 5 and generate it.
