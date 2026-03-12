@@ -52,7 +52,7 @@ bundle / share deliverables
 
 ### Phase 0: Pre-flight
 
-1. **Locate MANIFEST.yaml**: Search in order: `outputs/MANIFEST.yaml` → `MANIFEST.yaml` → prompt user. **Set `today`** = current date in `YYYY-MM-DD` format. **Set `PLUGIN_VERSION`** = `"1.12.0"`. **Dual-language default**: Set `dual_lang = True` by default — both English and Korean versions of the report are always generated. If the user's invocation message contains `--single-lang` (case-insensitive substring match, same pattern as `--fast` in Phase 6), set `dual_lang = False` to produce only the primary-language report.
+1. **Locate MANIFEST.yaml**: Search in order: `outputs/MANIFEST.yaml` → `MANIFEST.yaml` → prompt user. **Set `today`** = current date in `YYYY-MM-DD` format. **Set `PLUGIN_VERSION`** = `"1.13.0"`. **Dual-language default**: Set `dual_lang = True` by default — both English and Korean versions of the report are always generated. If the user's invocation message contains `--single-lang` (case-insensitive substring match, same pattern as `--fast` in Phase 6), set `dual_lang = False` to produce only the primary-language report. **Flag precedence**: `--single-lang` takes absolute priority. If both `--dual-lang` and `--single-lang` appear in the same invocation, `--single-lang` wins (single-language output). The `--dual-lang` flag is a no-op since dual-language is already the default — it exists only for backward compatibility with scripts that explicitly pass it.
 2. **Filter experiments**: Extract only `status: final` entries. **Exclude synthesis/report entries** (keys matching `/^f\d+/i` such as f001, f002) — these are reports, not source experiments. **Mark superseded experiments**: If an experiment's `notes` or `findings` field indicates it was superseded (e.g., "superseded by E017"), flag it as `superseded: true` — it counts toward exhaustiveness but should be cited as `E010→E017 (superseded)` rather than discussed independently. **If 0 final source experiments remain after filtering, HALT and inform the user — do not proceed to Phase 1.** **If only 1-2 final source experiments remain, HALT — synthesis requires at least 3 experiments for meaningful MECE question clustering. Suggest the user finalize more experiments or use a simple summary instead.**
 3. **Normalize MANIFEST fields**: Not all projects use the same field names. Apply this normalization chain before proceeding:
    - `description` ← fall back to `title` if `description` is missing
@@ -65,9 +65,9 @@ bundle / share deliverables
    - **Always preserve in English**: ALL-CAPS abbreviations (AUC, CI, ROC, GBM, IC50, EC50), capitalized method names (Lasso, Random Forest, XGBoost) and established English-only method terms used as technical vocabulary (logistic regression, support vector machine), SI units and scientific notation (uM, mg/kg, log₁₀), hyphenated compounds where one part is an abbreviation (p-value, dose-response, Hill coefficient), and any term appearing verbatim in English in the MANIFEST `findings` or `notes` fields.
    - **Korean equivalents acceptable**: Common nouns with established Korean scientific equivalents (accuracy/정확도, sensitivity/민감도, specificity/특이도) — agents should prefer the English term when adjacent to a metric value for scannability (e.g., "AUC 0.92, sensitivity 87%"), but Korean equivalents are acceptable in pure prose context.
    - **Never translate**: MANIFEST field values (experiment IDs, parameter names, numeric values), code blocks, file paths.
-   - **Tier 0 exception**: Tier 0 uses `gloss_first` policy — English term preserved but must be defined on first use in Korean parentheses (e.g., "AUC(모델 성능 지표, 1.0이 최고) 0.92"). Subsequent uses may use the English term alone.
+   - **Tier 0 exception**: Tier 0 uses `gloss_first` policy — English term preserved but must be defined on first use in Korean parentheses (e.g., "AUC(모델 성능 지표, 1.0이 최고) 0.92"). Subsequent uses may use the English term alone. **Constraint**: Gloss parentheticals must NOT contain nested parentheses (e.g., do NOT write `Hill coefficient(힐 계수 (n값))` — use `Hill coefficient(힐 계수, n값)` instead). Nested parentheses break regex-based stripping in Phase 3.5 and masking in Phase 4.
    When `manifest_language = "English"`, `term_policy` is not set (no action needed — all terms are already in English).
-   **Dual-language setup** (when `dual_lang = True`): Set `secondary_lang = "ko"` if `manifest_language == "English"`, else `"en"`. The primary report is generated in `manifest_language` (Phase 3, unchanged). Phase 3.5 translates all 4 tiers to `secondary_lang`. **Mixed-language MANIFEST restriction**: If `dual_lang = True` and the MANIFEST contains mixed-language experiments, HALT and inform the user — dual-language generation requires a homogeneous-language MANIFEST.
+   **Dual-language setup** (when `dual_lang = True`): Set `secondary_lang = "ko"` if `manifest_language == "English"`, else `"en"`. The primary report is generated in `manifest_language` (Phase 3, unchanged). Phase 3.5 translates all 4 tiers to `secondary_lang`. **Mixed-language MANIFEST handling**: If `dual_lang = True` and the MANIFEST contains mixed-language experiments (>20% of experiments differ from the detected `manifest_language`), apply per-field language detection: tag each experiment's `description` and `findings` fields with their detected language (`field_lang`). Warn the user about the mixed-language state but proceed — Phase 3 agents use `manifest_language` for prose, while Phase 3.5 translates per-field based on `field_lang` (fields already in `secondary_lang` are passed through without re-translation). If experiments are split 50/50 between languages with no clear majority, HALT and ask the user to specify `manifest_language` explicitly.
    **"Never translate" rule clarification** (dual-lang context): The existing rule "Never translate: MANIFEST field values" applies to **identifiers** (experiment IDs, parameter names, numeric values, ALL-CAPS abbreviations, method names, units, code blocks, file paths). **Prose content** in `findings`/`description` fields may be translated to the secondary language by the Phase 3.5 translation agent. This distinction exists because identifiers must be traceable across versions, while prose is language-dependent by nature.
    **Agent prompt injection** (dual-lang): In Phase 3 (primary report), agent prompts use `Language: {manifest_language}` as before. In Phase 3.5, the translation agent receives `Source language: {manifest_language} / Target language: {secondary_lang}`.
 5. **Build figure registry**: Collect figures from **two sources** (MANIFEST `outputs` field is primary, glob is supplementary):
@@ -228,8 +228,8 @@ For each confirmed question, extract an actionable decision:
 **Serialize**: Save Decision Table to `data/F{NNN}/decision_table.md`. Agent 1 reads this file.
 
 **Step 2.5 — Decision Table translation** (dual_lang only): Translate the Decision Table to `secondary_lang`. The lead agent performs this directly (no spawned subagent — it's 4-6 table rows):
-- **Translate columns**: Judgment (verdict prose) and Decision (topic noun phrase)
-- **Pass-through columns verbatim**: Evidence (experiment IDs) and Key Numbers (metrics, abbreviations, units — these remain in English regardless of target language per `term_policy`)
+- **Translate columns**: Judgment (verdict prose), Decision (topic noun phrase), and Evidence (prose context only — experiment IDs like E001, E012 must remain verbatim within the translated prose)
+- **Pass-through columns verbatim**: Key Numbers (metrics, abbreviations, units — these remain character-identical regardless of target language per `term_policy`)
 - Save as `data/F{NNN}/decision_table_{secondary_lang}.md`. The canonical `decision_table.md` remains the primary-language authoritative version — do not rename or delete it.
 
 ### Phase 3: Tier Generation (3+1 agents)
@@ -522,7 +522,13 @@ same count appears in the corresponding translated file. Report any discrepancie
 
    **Step 2f — Cross-language reconciliation** (dual_lang only): Compare the set of numbers extracted from the primary report with those from the secondary report. Flag any number present in one but not the other (symmetric difference). Exclude numbers inside Korean `gloss_first` parentheticals from the comparison — these are definitional (e.g., "1.0" in "1.0이 최고") and not statistical values. If discrepancies are found, patch the secondary report to match the primary.
 
-   **Korean gloss masking** (dual_lang, Korean files): Before running Steps 2b/2c on Korean (`_ko`) files, mask `gloss_first` parentheticals to avoid false-positive orphaned numbers. Use regex: `\((?=[^)]*[\uac00-\ud7a3])[^)]+\)` to match any parenthetical containing Hangul characters. Replace matched parentheticals with empty string before number extraction. Apply masking to Steps 2a and 2c when processing Korean files — Tier 0 uses `gloss_first` most frequently, but Korean Tier 1 Judgment cells may also contain inline parenthetical clarifications.
+   **Korean gloss masking** (dual_lang, Korean files): Before running Steps 2b/2c on Korean (`_ko`) files, use a **two-pass masking** approach to avoid losing real statistical values inside Korean parentheticals:
+
+   **Pass 1 — Mask pure-gloss parentheticals**: Use regex `\([가-힣][^)]+\)` to match parentheticals whose first character inside the opening paren is Hangul. These are definitional glosses (e.g., `(모델 성능 지표, 1.0이 최고)`). Replace with empty string before number extraction.
+
+   **Pass 2 — Flag mixed parentheticals for review**: Use regex `\((?![가-힣])(?=[^)]*[\uac00-\ud7a3])(?=[^)]*\d)[^)]+\)` to match parentheticals where the first character inside the paren is NOT Hangul, but the content contains BOTH Hangul AND digits (e.g., `(2340명 참여, p=0.003)`). The negative lookahead `(?![가-힣])` ensures no overlap with Pass 1 targets. Do NOT mask these — instead, extract numbers from them normally but flag them for manual review in the Step 2e report.
+
+   **Scoping**: Apply masking to Steps 2a and 2c when processing Korean files. Tier 0 uses `gloss_first` most frequently; Korean Tier 1 Judgment cells may also contain inline parenthetical clarifications. Tier 2 and Tier 3 do not use `gloss_first` (their Korean versions use `preserve_technical_english` policy) — masking is unnecessary for these tiers.
 
    If verification fails, patch Tier 2 to include missing numbers before proceeding to Phase 5.
 
@@ -564,15 +570,22 @@ wait
 ```
 **Dual-lang Step 5c**: When `dual_lang = True`, convert both language reports. First, run a CJK font pre-flight check for Korean PDF:
 ```python
-# CJK font pre-check (before launching parallel conversions)
+# CJK font pre-check using pixel-variance render test (before launching parallel conversions)
+# Simple insert_text return-code checks fail silently in containers — use actual pixel inspection.
 ko_pdf_skipped = False
 try:
     import fitz
-    # Test render a Korean character to verify CJK font availability
-    doc = fitz.open(); page = doc.new_page()
-    rc = page.insert_text((72, 72), "한글테스트", fontsize=11)
-    if rc <= 0:
-        print("WARNING: CJK font not available for PDF rendering. Korean PDF will be skipped.")
+    doc = fitz.open(); page = doc.new_page(width=200, height=100)
+    page.insert_text((10, 50), "한글테스트", fontsize=24)
+    pix = page.get_pixmap(dpi=72)
+    samples = pix.samples  # raw pixel bytes
+    # Check pixel variance: if CJK font rendered, pixels will have non-trivial variance
+    # A blank/tofu page has near-zero variance (all white or uniform blocks)
+    pixel_values = list(samples[::4])  # sample every 4th byte (one channel)
+    mean_val = sum(pixel_values) / len(pixel_values)
+    variance = sum((v - mean_val) ** 2 for v in pixel_values) / len(pixel_values)
+    if variance < 10.0:  # threshold: tofu/blank renders have variance < 1.0
+        print("WARNING: CJK font not available (pixel variance test failed). Korean PDF will be skipped.")
         ko_pdf_skipped = True
     doc.close()
 except Exception:
@@ -1160,6 +1173,8 @@ HTML 파일을 열면 이미지 임베딩, 목차 탐색, 접이식 섹션이 �
 *exp-report 플러그인 v{PLUGIN_VERSION}으로 {today}에 생성됨.*
 ```
 
+**Parametrization rule**: GUIDE.md MUST be generated by filling template placeholders (`{PROJECT_TITLE}`, `{today}`, `{EXPERIMENT_COUNT}`, `{RANGE}`, `{F_NUMBER}`, `{PLUGIN_VERSION}`, `{FIGURE_COUNT}`, `{DATA_FILE_COUNT}`, `{EXPERIMENT_TABLE_ROWS}`, `{FIGURE_TABLE_ROWS}`, `{DATA_TABLE_ROWS}`) from Phase 0-5 computed data. Do NOT use LLM free-text generation for any part of GUIDE.md — all content comes from the templates above. For dual-language GUIDE.md, concatenate both templates (EN section first, then KO section with `---` separator and anchor links) rather than translating one into the other.
+
 **Conditional rows**: Use `has_pdf` (boolean from step 6.5e), `figure_count` (from `len(figure_map)`), and `data_file_count` (from `len(data_map)`, computed in step 6.5c) to conditionally include/exclude PDF, figures/, and data/ rows. The `{%- if ... %}` notation is pseudo-Jinja — implement as Python string conditionals.
 
 **`{DATA_TABLE_ROWS}` generation** (parallel to `{FIGURE_TABLE_ROWS}`):
@@ -1242,7 +1257,8 @@ deliverable_stats = {
      deliverable: data/F{NNN}/deliverable/
      deliverable_zip: data/F{NNN}/F{NNN}_deliverable.zip
      status: final
-     lang: [en, ko]  # dual_lang only — omit this field for single-language reports. Describes output formats, NOT input MANIFEST language. Must not be used for manifest_language detection in Phase 0.
+     schema_version: 2  # Registry schema version. v1: no lang field. v2: lang array + schema_version. Readers should default to schema_version=1 and lang=[manifest_language] when this field is absent (backward compatibility).
+     lang: [en, ko]  # dual_lang only — omit this field for single-language reports (schema_version=1 readers assume single-language). Describes output formats, NOT input MANIFEST language. Must not be used for manifest_language detection in Phase 0.
      description: "F{NNN} Integrated Report: 4-Tier synthesis of {EXPERIMENT_COUNT} experiments"
      findings: "[Extract the first 2 sentences of the Tier 1 Executive Summary paragraph verbatim, truncated at 200 characters if necessary (add '...' suffix). Do not paraphrase.]"
      notes: "[HTML size, PDF size/pages, line count, data: {data_file_count} files]"
