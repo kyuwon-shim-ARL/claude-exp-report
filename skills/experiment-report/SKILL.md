@@ -33,6 +33,7 @@ The multi-tier structure eliminates redundancy (where the same experiment listin
 2. At least 3 final experiments (otherwise a simple summary suffices)
 3. Each experiment should have `description`, `findings`, and `path` fields (alternatives accepted — see Phase 0 normalization)
 4. Figure files should exist at `{experiment.path}/figures/*.png`
+5. (Optional) To include data files in deliverables, either list them in `outputs` or set `data_dir` to a directory containing final data (e.g., `{experiment.path}/results/`). Recommended convention: keep final CSVs/tables in a `results/` subdirectory separate from intermediate working files.
 
 ## Lifecycle Position
 

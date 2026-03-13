@@ -57,6 +57,30 @@ experiments:
       - data/E001/figures/plot.png
 ```
 
+## Including Data Files in Deliverables
+
+Figures in `{exp_path}/figures/` are auto-discovered. Data files require opt-in via one of two methods:
+
+**Method 1: List individually in `outputs`** (precise control)
+```yaml
+e001:
+  outputs:
+    - data/E001/figures/roc_curve.png
+    - data/E001/results.csv           # listed explicitly
+```
+
+**Method 2: Set `data_dir`** (directory-level inclusion)
+```yaml
+e001:
+  data_dir: data/E001/results/        # all CSV/TSV/JSON/etc. in this dir
+  outputs:
+    - data/E001/figures/roc_curve.png
+```
+
+**Recommended convention**: Place final data files in a `results/` subdirectory within each experiment, then set `data_dir` to point there. This keeps intermediate files separate from deliverable-ready outputs.
+
+Supported data extensions: `.csv`, `.tsv`, `.json`, `.xlsx`, `.xls`, `.yaml`, `.yml`, `.parquet`, `.feather`, `.npy`, `.npz`, `.pkl`, `.pickle`.
+
 ## Features
 
 - MECE-validated question discovery with narrative arc ordering (Claim → Mechanism → Boundary → Practical)
