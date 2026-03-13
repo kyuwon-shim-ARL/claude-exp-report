@@ -52,13 +52,14 @@ bundle / share deliverables
 
 ### Phase 0: Pre-flight
 
-1. **Locate MANIFEST.yaml**: Search in order: `outputs/MANIFEST.yaml` → `MANIFEST.yaml` → prompt user. **Set `today`** = current date in `YYYY-MM-DD` format. **Set `PLUGIN_VERSION`** = `"1.13.0"`. **Dual-language default**: Set `dual_lang = True` by default — both English and Korean versions of the report are always generated. If the user's invocation message contains `--single-lang` (case-insensitive substring match, same pattern as `--fast` in Phase 6), set `dual_lang = False` to produce only the primary-language report. **Flag precedence**: `--single-lang` takes absolute priority. If both `--dual-lang` and `--single-lang` appear in the same invocation, `--single-lang` wins (single-language output). The `--dual-lang` flag is a no-op since dual-language is already the default — it exists only for backward compatibility with scripts that explicitly pass it.
+1. **Locate MANIFEST.yaml**: Search in order: `outputs/MANIFEST.yaml` → `MANIFEST.yaml` → prompt user. **Set `today`** = current date in `YYYY-MM-DD` format. **Set `PLUGIN_VERSION`** = `"1.14.0"`. **Dual-language default**: Set `dual_lang = True` by default — both English and Korean versions of the report are always generated. If the user's invocation message contains `--single-lang` (case-insensitive substring match, same pattern as `--fast` in Phase 6), set `dual_lang = False` to produce only the primary-language report. **Flag precedence**: `--single-lang` takes absolute priority. If both `--dual-lang` and `--single-lang` appear in the same invocation, `--single-lang` wins (single-language output). The `--dual-lang` flag is a no-op since dual-language is already the default — it exists only for backward compatibility with scripts that explicitly pass it.
 2. **Filter experiments**: Extract only `status: final` entries. **Exclude synthesis/report entries** (keys matching `/^f\d+/i` such as f001, f002) — these are reports, not source experiments. **Mark superseded experiments**: If an experiment's `notes` or `findings` field indicates it was superseded (e.g., "superseded by E017"), flag it as `superseded: true` — it counts toward exhaustiveness but should be cited as `E010→E017 (superseded)` rather than discussed independently. **If 0 final source experiments remain after filtering, HALT and inform the user — do not proceed to Phase 1.** **If only 1-2 final source experiments remain, HALT — synthesis requires at least 3 experiments for meaningful MECE question clustering. Suggest the user finalize more experiments or use a simple summary instead.**
 3. **Normalize MANIFEST fields**: Not all projects use the same field names. Apply this normalization chain before proceeding:
    - `description` ← fall back to `title` if `description` is missing
    - `findings` ← fall back to `result`, then `conclusion`, then `description` if `findings` is missing
    - `path` ← if missing, derive from `outputs[0]` parent directory (e.g., `data/E001/figures/plot.png` → `data/E001/`). If `outputs[0]` is also a bare filename with no directory component, log a warning and skip this experiment from figure registry (path unresolvable).
    - When an output entry is a bare filename (no path separator), resolve as `{path}/{filename}`
+   - `data_dir` ← optional field. If present, resolve relative paths against project root. The directory must exist on disk — if it does not, log a warning and ignore (do not fail). This field enables supplementary data-file glob in step 5.5.
    Log which fields were normalized and continue — do not fail on missing canonical field names. **Escalation**: If ALL experiments required `findings` fallback to `description`, warn the user that the Decision Table will contain descriptions rather than empirical findings.
 4. **Detect MANIFEST language**: Inspect the `description` fields of the first 3 experiments. If majority are Korean → set `manifest_language = "Korean"`. If majority are English → `"English"`. For mixed cases, default to the language of the first experiment and log a note. **Propagation mechanism**: Include `manifest_language` as an explicit variable in every agent prompt by prepending `Language: {manifest_language}` to each agent's Input section. Do NOT rely on agents to auto-detect language from content — explicit injection ensures consistency across all 4 tiers.
    **Technical term policy**: When `manifest_language = "Korean"`, set `term_policy = "preserve_technical_english"`. This policy instructs agents to write prose in Korean but preserve English for technical terms. The term boundary is **rule-based** (not an exhaustive list):
@@ -103,7 +104,7 @@ bundle / share deliverables
                })
    ```
    The `deliverable_name` uses `{exp_id}_{stem}{suffix}` to prevent filename collisions. **Deduplicate**: `seen_paths` ensures each file appears only once — first-seen entry wins (log a note on duplicates). **If an experiment has zero figures**, record it as empty and log a note — do not fail. Tier 2 should skip figure embedding for that question if no relevant figure exists. **Size guard**: Compute `total_figure_size_bytes` from the registry. If total exceeds 50 MB, warn the user that the deliverable will be large.
-5.5. **Build data registry**: Collect non-figure data files from MANIFEST `outputs` field only (no supplementary glob — unlike figure_registry, data files must be explicitly listed in MANIFEST to avoid capturing intermediate/cache files):
+5.5. **Build data registry**: Collect non-figure data files from **two sources** (MANIFEST `outputs` field is primary; `data_dir` glob is supplementary — opt-in only):
    ```python
    SUPPORTED_DATA_EXTS = {'.csv', '.tsv', '.json', '.xlsx', '.xls',
                           '.yaml', '.yml', '.parquet', '.feather',
@@ -111,6 +112,7 @@ bundle / share deliverables
    data_registry = []
    seen_data_paths = set()
    for exp_id, exp in final_experiments.items():
+       # Primary: MANIFEST outputs field (explicit listing)
        for output_path in exp.get('outputs', []):
            # Apply step 3 bare-filename resolution
            if os.sep not in output_path and '/' not in output_path:
@@ -126,8 +128,32 @@ bundle / share deliverables
                    "deliverable_name": f"{exp_id.upper()}_{p.stem}{p.suffix}",
                    "size_bytes": p.stat().st_size if p.exists() else 0
                })
+       # Supplementary: data_dir glob (opt-in via MANIFEST data_dir field)
+       # Unlike figure_registry's unconditional glob, data files require explicit
+       # author opt-in because data directories have high false-positive rates
+       # (intermediate files, caches, configs). The data_dir field lets authors
+       # designate a curated directory (e.g., results/, final/) distinct from
+       # working files, maintaining MANIFEST as the single source of truth.
+       data_dir = exp.get('data_dir')
+       if data_dir:
+           data_dir_path = Path(data_dir)
+           if data_dir_path.is_dir():
+               for p in sorted(data_dir_path.glob('*')):
+                   if (p.is_file()
+                           and p.suffix.lower() in SUPPORTED_DATA_EXTS
+                           and not p.is_symlink()
+                           and str(p) not in seen_data_paths):
+                       seen_data_paths.add(str(p))
+                       data_registry.append({
+                           "original_path": str(p),
+                           "exp_id": exp_id.upper(),
+                           "stem": p.stem,
+                           "suffix": p.suffix,
+                           "deliverable_name": f"{exp_id.upper()}_{p.stem}{p.suffix}",
+                           "size_bytes": p.stat().st_size if p.exists() else 0
+                       })
    ```
-   **Symlink guard**: Symlinks are excluded to avoid aliased duplicates. Note: figure_registry does not yet apply this guard — tracked for future update. **Size warning**: Compute `total_data_size_bytes` from the registry. If total exceeds 200 MB, warn the user that the deliverable will be large (but do not block — user explicitly allows large data files). **Zero-data edge case**: If no data files match the allowlist, `data_registry` is empty — this is valid. Phase 6.5 will skip creating the `data/` directory and GUIDE.md will omit the data section.
+   **Design rationale — why `data_dir` instead of unconditional glob**: Figures use an unconditional `figures/*` glob because `figures/` directories have a strong semantic contract (publication-ready visualizations) with a <5% false-positive rate. Data directories have 30-60% false-positive rates (intermediate results, config files, caches with `.pkl`/`.json`/`.yaml` extensions). The `data_dir` field preserves author intentionality — the experimenter explicitly designates which directory contains deliverable-ready data. This maintains MANIFEST as the single source of truth while reducing friction (no need to list every CSV individually). **Symlink guard**: Symlinks are excluded in both primary and supplementary paths to avoid aliased duplicates. Note: figure_registry does not yet apply this guard — tracked for future update. **`p.is_file()` guard**: The supplementary glob uses `p.is_file()` to exclude subdirectory entries — the glob is intentionally non-recursive (depth 1 only) to avoid capturing intermediate files in nested subdirectories. **Size warning**: Compute `total_data_size_bytes` from the registry. If total exceeds 200 MB, warn the user that the deliverable will be large (but do not block — user explicitly allows large data files). **Zero-data edge case**: If no data files match the allowlist, `data_registry` is empty — this is valid. Phase 6.5 will skip creating the `data/` directory and GUIDE.md will omit the data section.
 6. **Auto-detect F-number**: Scan MANIFEST for existing `f###` entries (case-insensitive). Next number = max + 1. Format as `F{NNN}` (e.g., F004).
 7. **Check conversion scripts**: Look for `scripts/md_to_html.py` and `scripts/md_to_pdf.py`. If missing, generate them from embedded templates in Phase 5.
 8. **Create output directory**: `data/F{NNN}/`

@@ -21,6 +21,7 @@ experiments:
     status: final
     description: "Feature selection comparison: Lasso vs Random Forest importance"
     findings: "Lasso selected 12 features (AUC 0.87), RF selected 18 features (AUC 0.86). Lasso preferred for parsimony."
+    data_dir: data/E002/results/    # opt-in: glob all data files in this directory
     outputs:
       - data/E002/figures/feature_importance.png
     notes: "Retroactive: uses pipeline from E001 as baseline"

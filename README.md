@@ -52,6 +52,7 @@ experiments:
     status: final
     description: "What this experiment tested"
     findings: "Key results with numbers"
+    data_dir: data/E001/results/    # optional: auto-include all data files from this directory
     outputs:
       - data/E001/figures/plot.png
 ```
