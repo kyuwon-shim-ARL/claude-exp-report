@@ -53,7 +53,7 @@ bundle / share deliverables
 
 ### Phase 0: Pre-flight
 
-1. **Locate MANIFEST.yaml**: Search in order: `outputs/MANIFEST.yaml` → `MANIFEST.yaml` → prompt user. **Set `today`** = current date in `YYYY-MM-DD` format. **Set `PLUGIN_VERSION`** = `"1.14.0"`. **Dual-language default**: Set `dual_lang = True` by default — both English and Korean versions of the report are always generated. If the user's invocation message contains `--single-lang` (case-insensitive substring match, same pattern as `--fast` in Phase 6), set `dual_lang = False` to produce only the primary-language report. **Flag precedence**: `--single-lang` takes absolute priority. If both `--dual-lang` and `--single-lang` appear in the same invocation, `--single-lang` wins (single-language output). The `--dual-lang` flag is a no-op since dual-language is already the default — it exists only for backward compatibility with scripts that explicitly pass it.
+1. **Locate MANIFEST.yaml**: Search in order: `outputs/MANIFEST.yaml` → `MANIFEST.yaml` → prompt user. **Set `today`** = current date in `YYYY-MM-DD` format. **Set `PLUGIN_VERSION`** = `"1.15.0"`. **Dual-language default**: Set `dual_lang = True` by default — both English and Korean versions of the report are always generated. If the user's invocation message contains `--single-lang` (case-insensitive substring match, same pattern as `--fast` in Phase 6), set `dual_lang = False` to produce only the primary-language report. **Flag precedence**: `--single-lang` takes absolute priority. If both `--dual-lang` and `--single-lang` appear in the same invocation, `--single-lang` wins (single-language output). The `--dual-lang` flag is a no-op since dual-language is already the default — it exists only for backward compatibility with scripts that explicitly pass it.
 2. **Filter experiments**: Extract only `status: final` entries. **Exclude synthesis/report entries** (keys matching `/^f\d+/i` such as f001, f002) — these are reports, not source experiments. **Mark superseded experiments**: If an experiment's `notes` or `findings` field indicates it was superseded (e.g., "superseded by E017"), flag it as `superseded: true` — it counts toward exhaustiveness but should be cited as `E010→E017 (superseded)` rather than discussed independently. **If 0 final source experiments remain after filtering, HALT and inform the user — do not proceed to Phase 1.** **If only 1-2 final source experiments remain, HALT — synthesis requires at least 3 experiments for meaningful MECE question clustering. Suggest the user finalize more experiments or use a simple summary instead.**
 3. **Normalize MANIFEST fields**: Not all projects use the same field names. Apply this normalization chain before proceeding:
    - `description` ← fall back to `title` if `description` is missing
@@ -80,9 +80,15 @@ bundle / share deliverables
    for exp_id, exp in final_experiments.items():
        # Primary: resolved outputs from MANIFEST
        for output_path in exp.get('outputs', []):
+           # Bare-filename resolution (parity with step 5.5)
+           if os.sep not in output_path and '/' not in output_path:
+               output_path = str(Path(exp['path']) / output_path)
            p = Path(output_path)
-           if p.suffix.lower() in SUPPORTED_EXTS and str(p) not in seen_paths:
-               seen_paths.add(str(p))
+           resolved_key = str(p.resolve()) if p.exists() else str(p)
+           if (p.suffix.lower() in SUPPORTED_EXTS
+                   and not p.is_symlink()
+                   and resolved_key not in seen_paths):
+               seen_paths.add(resolved_key)
                figure_registry.append({
                    "original_path": str(p),
                    "exp_id": exp_id.upper(),
@@ -93,8 +99,11 @@ bundle / share deliverables
                })
        # Supplementary: glob for figures not listed in outputs
        for p in sorted(Path(exp['path']).glob('figures/*')):
-           if p.suffix.lower() in SUPPORTED_EXTS and str(p) not in seen_paths:
-               seen_paths.add(str(p))
+           resolved_key = str(p.resolve()) if p.exists() else str(p)
+           if (p.suffix.lower() in SUPPORTED_EXTS
+                   and not p.is_symlink()
+                   and resolved_key not in seen_paths):
+               seen_paths.add(resolved_key)
                figure_registry.append({
                    "original_path": str(p),
                    "exp_id": exp_id.upper(),
@@ -119,8 +128,16 @@ bundle / share deliverables
            if os.sep not in output_path and '/' not in output_path:
                output_path = str(Path(exp['path']) / output_path)
            p = Path(output_path)
-           if p.suffix.lower() in SUPPORTED_DATA_EXTS and not p.is_symlink() and str(p) not in seen_data_paths:
-               seen_data_paths.add(str(p))
+           resolved_key = str(p.resolve()) if p.exists() else str(p)
+           if (p.suffix.lower() in SUPPORTED_DATA_EXTS
+                   and not p.is_symlink()
+                   and resolved_key not in seen_data_paths):
+               seen_data_paths.add(resolved_key)
+               if not p.exists():
+                   print(f"WARNING: data output listed in MANIFEST not found on disk: {p}")
+               if p.exists() and p.stat().st_size == 0:
+                   print(f"WARNING: zero-byte data file skipped: {p}")
+                   continue
                data_registry.append({
                    "original_path": str(p),
                    "exp_id": exp_id.upper(),
@@ -135,16 +152,25 @@ bundle / share deliverables
        # (intermediate files, caches, configs). The data_dir field lets authors
        # designate a curated directory (e.g., results/, final/) distinct from
        # working files, maintaining MANIFEST as the single source of truth.
+       # Note: data_dir glob is depth-1 only — files in subdirectories are excluded
+       # to avoid capturing intermediate files in nested structures.
        data_dir = exp.get('data_dir')
        if data_dir:
+           # Resolve relative paths against MANIFEST parent directory (project root)
            data_dir_path = Path(data_dir)
+           if not data_dir_path.is_absolute():
+               data_dir_path = manifest_path.parent / data_dir_path
            if data_dir_path.is_dir():
                for p in sorted(data_dir_path.glob('*')):
+                   resolved_key = str(p.resolve()) if p.exists() else str(p)
                    if (p.is_file()
                            and p.suffix.lower() in SUPPORTED_DATA_EXTS
                            and not p.is_symlink()
-                           and str(p) not in seen_data_paths):
-                       seen_data_paths.add(str(p))
+                           and resolved_key not in seen_data_paths):
+                       seen_data_paths.add(resolved_key)
+                       if p.stat().st_size == 0:
+                           print(f"WARNING: zero-byte data file skipped: {p}")
+                           continue
                        data_registry.append({
                            "original_path": str(p),
                            "exp_id": exp_id.upper(),
@@ -154,7 +180,7 @@ bundle / share deliverables
                            "size_bytes": p.stat().st_size if p.exists() else 0
                        })
    ```
-   **Design rationale — why `data_dir` instead of unconditional glob**: Figures use an unconditional `figures/*` glob because `figures/` directories have a strong semantic contract (publication-ready visualizations) with a <5% false-positive rate. Data directories have 30-60% false-positive rates (intermediate results, config files, caches with `.pkl`/`.json`/`.yaml` extensions). The `data_dir` field preserves author intentionality — the experimenter explicitly designates which directory contains deliverable-ready data. This maintains MANIFEST as the single source of truth while reducing friction (no need to list every CSV individually). **Symlink guard**: Symlinks are excluded in both primary and supplementary paths to avoid aliased duplicates. Note: figure_registry does not yet apply this guard — tracked for future update. **`p.is_file()` guard**: The supplementary glob uses `p.is_file()` to exclude subdirectory entries — the glob is intentionally non-recursive (depth 1 only) to avoid capturing intermediate files in nested subdirectories. **Size warning**: Compute `total_data_size_bytes` from the registry. If total exceeds 200 MB, warn the user that the deliverable will be large (but do not block — user explicitly allows large data files). **Zero-data edge case**: If no data files match the allowlist, `data_registry` is empty — this is valid. Phase 6.5 will skip creating the `data/` directory and GUIDE.md will omit the data section.
+   **Design rationale — why `data_dir` instead of unconditional glob**: Figures use an unconditional `figures/*` glob because `figures/` directories have a strong semantic contract (publication-ready visualizations) with a <5% false-positive rate. Data directories have 30-60% false-positive rates (intermediate results, config files, caches with `.pkl`/`.json`/`.yaml` extensions). The `data_dir` field preserves author intentionality — the experimenter explicitly designates which directory contains deliverable-ready data. This maintains MANIFEST as the single source of truth while reducing friction (no need to list every CSV individually). **Symlink guard**: Symlinks are excluded in both primary and supplementary paths (figure_registry and data_registry alike) to avoid aliased duplicates. **`p.is_file()` guard**: The supplementary glob uses `p.is_file()` to exclude subdirectory entries — the glob is intentionally non-recursive (depth 1 only) to avoid capturing intermediate files in nested subdirectories. **Size warning**: Compute `total_data_size_bytes` from the registry. If total exceeds 200 MB, warn the user that the deliverable will be large (but do not block — user explicitly allows large data files). **Zero-data edge case**: If no data files match the allowlist, `data_registry` is empty — this is valid. Phase 6.5 will skip creating the `data/` directory and GUIDE.md will omit the data section.
 6. **Auto-detect F-number**: Scan MANIFEST for existing `f###` entries (case-insensitive). Next number = max + 1. Format as `F{NNN}` (e.g., F004).
 7. **Check conversion scripts**: Look for `scripts/md_to_html.py` and `scripts/md_to_pdf.py`. If missing, generate them from embedded templates in Phase 5.
 8. **Create output directory**: `data/F{NNN}/`
@@ -344,7 +370,7 @@ Constraints:
 ```
 You are writing Tier 3 (Technical Reference) of a multi-tier experiment synthesis report.
 
-Input: MANIFEST.yaml final experiments, figure registry (`data/F{NNN}/figure_registry.json`).
+Input: MANIFEST.yaml final experiments, figure registry (`data/F{NNN}/figure_registry.json`), data registry (`data/F{NNN}/data_registry.json`).
 
 Output file: data/F{NNN}/tier3_technical_reference.md
 
@@ -361,9 +387,10 @@ Structure (all inside a single <details> block):
 [Table of classes/categories with counts and member lists]
 
 ## C. Experiment Cross-Reference Matrix
-| Experiment | Status | Key Finding | Figures | Source | Related Experiments |
+| Experiment | Status | Key Finding | Figures | Data | Source | Related Experiments |
 for each final experiment, add:
   Figures: link to figure files from registry (e.g., `[roc.png](data/E001/figures/roc.png)`)
+  Data: link to data files from data_registry (e.g., `[results.csv](data/E001/results/results.csv)`); leave empty if no data files for this experiment
   Source: link to experiment directory (e.g., `[E001](data/E001/)`)...
 
 ## D. Figure Gallery
@@ -455,6 +482,7 @@ Input files (read ALL before translating):
 - data/F{NNN}/config.json (contains term_policy)
 
 Also read the MANIFEST.yaml to access original findings/notes fields for verbatim reference.
+Also read data/F{NNN}/config.json for `field_lang` per-field language tags (from Phase 0 step 4 mixed-language handling). For fields already in the target `secondary_lang`, pass through without re-translation.
 
 Output files:
 - data/F{NNN}/tier0_plain_language_{secondary_lang}.md
@@ -1017,10 +1045,16 @@ for report_path in report_files:
         # Replace both normalized and ./ prefixed forms
         md_content = md_content.replace(original_path, f'figures/{deliverable_name}')
         md_content = md_content.replace(f'./{original_path}', f'figures/{deliverable_name}')
-    # Warn if any unrewritten project-relative figure paths remain (broad pattern)
-    remaining = re.findall(r'data/[Ee]\d+/[^\s)]+\.(?:png|jpg|jpeg|gif|svg)', md_content)
+    # Rewrite data file paths (parity with figure path rewriting)
+    for original_path, deliverable_name in data_map.items():
+        md_content = md_content.replace(original_path, f'data/{deliverable_name}')
+        md_content = md_content.replace(f'./{original_path}', f'data/{deliverable_name}')
+    # Warn if any unrewritten project-relative paths remain (figures + data)
+    FIGURE_EXTS = r'png|jpg|jpeg|gif|svg'
+    DATA_EXTS = r'csv|tsv|json|xlsx|xls|yaml|yml|parquet|feather|npy|npz|pkl|pickle'
+    remaining = re.findall(rf'data/[Ee]\d+/[^\s)]+\.(?:{FIGURE_EXTS}|{DATA_EXTS})', md_content)
     if remaining:
-        print(f"WARNING: {len(remaining)} figure paths not rewritten: {remaining}")
+        print(f"WARNING: {len(remaining)} paths not rewritten: {remaining}")
     out_name = Path(report_path).name
     Path(f'data/F{NNN}/deliverable/{out_name}').write_text(md_content)
 ```
@@ -1206,17 +1240,21 @@ HTML 파일을 열면 이미지 임베딩, 목차 탐색, 접이식 섹션이 �
 
 **`{DATA_TABLE_ROWS}` generation** (parallel to `{FIGURE_TABLE_ROWS}`):
 ```python
+# Build exp_id → description lookup from final_experiments (Phase 0 step 3 normalized)
+exp_descriptions = {eid.upper(): exp.get('description', '') for eid, exp in final_experiments.items()}
+
 data_table_rows = []
 for entry in data_registry:
     if entry['original_path'] in data_map:  # only successfully copied files
+        desc = exp_descriptions.get(entry['exp_id'], '')
         data_table_rows.append(
             f"| `{entry['deliverable_name']}` | {entry['exp_id']} "
             f"| {entry['suffix'].upper().lstrip('.')} "
-            f"| {entry.get('description', '')} |"
+            f"| {desc} |"
         )
 DATA_TABLE_ROWS = '\n'.join(data_table_rows)
 ```
-The `description` field is sourced from the MANIFEST experiment's `description` field (already normalized in Phase 0 step 3). If unavailable, leave empty. The `Format` column displays the uppercase file extension (e.g., CSV, JSON, PARQUET).
+The `description` field is looked up from the MANIFEST experiment's `description` field via `exp_id` (already normalized in Phase 0 step 3). The `Format` column displays the uppercase file extension (e.g., CSV, JSON, PARQUET).
 
 **Write instruction**:
 ```python
@@ -1296,7 +1334,7 @@ deliverable_stats = {
    ## {date}: F{NNN} generated (4-Tier Report)
    - **Structure**: Plain Language + Decision Brief + Evidence Narrative + Technical Reference
    - **Source**: {EXPERIMENT_COUNT} final experiments ({range})
-   - **Outputs**: MD + HTML + PDF
+   - **Outputs**: MD + HTML + PDF + {figure_count} figures + {data_file_count} data files
    - **Status**: final
    ```
 
@@ -1420,7 +1458,7 @@ Before declaring completion, verify **ALL** of the following. **If any REQUIRED 
 - [ ] `data_registry.json` exists at `data/F{NNN}/data_registry.json` (serialized in Phase 0 step 9)
 - [ ] `deliverable/data/` contains `{data_file_count}` files matching data_registry (or absent if data_file_count == 0)
 - [ ] GUIDE.md "Source Data Files" / "원본 데이터 파일" section present IFF data_file_count > 0
-- [ ] No symlinks in data_registry entries (all entries pass `not Path.is_symlink()`)
+- [ ] No symlinks in figure_registry or data_registry entries (all entries pass `not Path.is_symlink()`)
 - [ ] Korean reports: technical terms preserved in English (AUC not 곡선하면적, p-value not p값) with `gloss_first` applied in Tier 0
 - [ ] Korean reports: MANIFEST `findings` field values appear verbatim (not translated)
 - [ ] **Dual-lang** (when `dual_lang = True`):

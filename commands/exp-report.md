@@ -54,6 +54,7 @@ data/F{NNN}/
     F{NNN}_report.pdf          #   Print version
     F{NNN}_report.md           #   MD with relative figure paths
     figures/                   #   Original figures by experiment
+    data/                      #   Source data files (if data_dir set or data in outputs)
     tiers/                     #   Individual tier source files
     GUIDE.md                   #   Interpretation guide
 ```
