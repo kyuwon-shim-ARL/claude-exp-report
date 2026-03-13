@@ -33,7 +33,7 @@ The multi-tier structure eliminates redundancy (where the same experiment listin
 2. At least 3 final experiments (otherwise a simple summary suffices)
 3. Each experiment should have `description`, `findings`, and `path` fields (alternatives accepted — see Phase 0 normalization)
 4. Figure files should exist at `{experiment.path}/figures/*.png`
-5. (Optional) To include data files in deliverables, either list them in `outputs` or set `data_dir` to a directory containing final data (e.g., `{experiment.path}/results/`). Recommended convention: keep final CSVs/tables in a `results/` subdirectory separate from intermediate working files.
+5. (Optional) To include data files in deliverables, either list them in `outputs` or set `data_dir` to a directory containing final data (e.g., `{experiment.path}/results/`). Recommended convention: keep final CSVs/tables in a `results/` subdirectory separate from intermediate working files. **Format recommendation**: For stakeholder-reviewable data, prefer CSV/TSV over JSON — tabular formats render as preview tables in the Tier 3 Technical Reference and are directly openable in spreadsheet applications. JSON is acceptable for nested/hierarchical data structures but should include a companion CSV for the key summary table when possible.
 
 ## Lifecycle Position
 
@@ -53,8 +53,20 @@ bundle / share deliverables
 
 ### Phase 0: Pre-flight
 
-1. **Locate MANIFEST.yaml**: Search in order: `outputs/MANIFEST.yaml` → `MANIFEST.yaml` → prompt user. **Set `today`** = current date in `YYYY-MM-DD` format. **Set `PLUGIN_VERSION`** = `"1.15.0"`. **Dual-language default**: Set `dual_lang = True` by default — both English and Korean versions of the report are always generated. If the user's invocation message contains `--single-lang` (case-insensitive substring match, same pattern as `--fast` in Phase 6), set `dual_lang = False` to produce only the primary-language report. **Flag precedence**: `--single-lang` takes absolute priority. If both `--dual-lang` and `--single-lang` appear in the same invocation, `--single-lang` wins (single-language output). The `--dual-lang` flag is a no-op since dual-language is already the default — it exists only for backward compatibility with scripts that explicitly pass it.
+1. **Locate MANIFEST.yaml**: Search in order: `outputs/MANIFEST.yaml` → `MANIFEST.yaml` → prompt user. **Set `today`** = current date in `YYYY-MM-DD` format. **Set `PLUGIN_VERSION`** = `"1.16.0"`. **Dual-language default**: Set `dual_lang = True` by default — both English and Korean versions of the report are always generated. If the user's invocation message contains `--single-lang` (case-insensitive substring match, same pattern as `--fast` in Phase 6), set `dual_lang = False` to produce only the primary-language report. **Flag precedence**: `--single-lang` takes absolute priority. If both `--dual-lang` and `--single-lang` appear in the same invocation, `--single-lang` wins (single-language output). The `--dual-lang` flag is a no-op since dual-language is already the default — it exists only for backward compatibility with scripts that explicitly pass it.
 2. **Filter experiments**: Extract only `status: final` entries. **Exclude synthesis/report entries** (keys matching `/^f\d+/i` such as f001, f002) — these are reports, not source experiments. **Mark superseded experiments**: If an experiment's `notes` or `findings` field indicates it was superseded (e.g., "superseded by E017"), flag it as `superseded: true` — it counts toward exhaustiveness but should be cited as `E010→E017 (superseded)` rather than discussed independently. **If 0 final source experiments remain after filtering, HALT and inform the user — do not proceed to Phase 1.** **If only 1-2 final source experiments remain, HALT — synthesis requires at least 3 experiments for meaningful MECE question clustering. Suggest the user finalize more experiments or use a simple summary instead.**
+   **Scope declaration** (after filtering): Print the report scope to make the experiment selection explicit and prevent unintended incremental reports:
+   ```
+   >>> Report scope: COMPREHENSIVE — {N} final experiments selected ({exp_id_range})
+   >>> Excluded: {M} synthesis entries (f001..f00M), {K} non-final experiments
+   ```
+   This forces the LLM to acknowledge the full experiment set before proceeding. If only a subset of final experiments was intended (e.g., user explicitly requested "report on E020-E023 only"), the user should see a different message:
+   ```
+   >>> Report scope: INCREMENTAL — {N} of {TOTAL} final experiments selected (user-specified subset)
+   >>> Note: {TOTAL - N} final experiments excluded by user request
+   ```
+   **Default is COMPREHENSIVE** — all `status: final` experiments are included unless the user explicitly restricts the scope.
+
 3. **Normalize MANIFEST fields**: Not all projects use the same field names. Apply this normalization chain before proceeding:
    - `description` ← fall back to `title` if `description` is missing
    - `findings` ← fall back to `result`, then `conclusion`, then `description` if `findings` is missing
@@ -328,7 +340,7 @@ Constraints:
 ```
 You are writing Tier 2 (Evidence Narrative) of a multi-tier experiment synthesis report.
 
-Input: MANIFEST.yaml final experiments (including `notes` fields — these contain critical context such as retroactive pipeline definitions, methodological caveats, and exclusion rationale), confirmed questions from Phase 1 (`data/F{NNN}/questions.json` — with narrative arc labels: Claim/Mechanism/Boundary/Practical and experiment assignments), figure registry (`data/F{NNN}/figure_registry.json`).
+Input: MANIFEST.yaml final experiments (including `notes` fields — these contain critical context such as retroactive pipeline definitions, methodological caveats, and exclusion rationale), confirmed questions from Phase 1 (`data/F{NNN}/questions.json` — with narrative arc labels: Claim/Mechanism/Boundary/Practical and experiment assignments), figure registry (`data/F{NNN}/figure_registry.json`), data registry (`data/F{NNN}/data_registry.json`).
 
 Output file: data/F{NNN}/tier2_evidence_narrative.md
 
@@ -362,6 +374,16 @@ Constraints:
 - Use project-relative paths for all figure references (e.g., `data/E001/figures/plot.png` — not absolute paths, not report-relative)
 - If multiple formal hypothesis tests are cited across questions, note the total count and whether family-wise error rate correction (e.g., Holm, Bonferroni) was applied
 - Scan for statistical language consistency: do not use "significantly" unless the cited p-value is < 0.05; use "practical improvement" or "non-significant trend" for p ≥ 0.05
+- **Data source linking**: When citing quantitative results (metrics, p-values, counts), link to the source data file from the data registry where available. For each question section, add a "Supporting Data" block after the Implication line:
+  ```
+  **Supporting Data**: [results.csv](data/E005/results/results.csv) · [summary.json](data/E003/results/summary.json)
+  ```
+  Rules for data linking:
+  - Select 1-3 most relevant data files per question from `data_registry.json`, matched by experiment ID assignment in `questions.json`
+  - Use project-relative paths (same convention as figure paths)
+  - If no data files exist for the experiments in a question, omit the Supporting Data block entirely (do not write "No data available")
+  - Do NOT link to figure files (those are handled separately via `![](...)` syntax)
+  - Prefer `.csv`/`.tsv` files over `.json` when both exist for the same experiment, as tabular formats are more reviewer-friendly
 ```
 
 #### Agent 3: Tier 3 — Technical Reference (haiku, ~60-100 lines)
@@ -395,6 +417,15 @@ for each final experiment, add:
 
 ## D. Figure Gallery
 [All figures from all experiments, organized by topic, with captions and experiment IDs]
+
+## E. Data File Preview
+[For each data file in data_registry, show a preview to help reviewers assess content without opening the file:]
+- **CSV/TSV files**: Display first 5 rows as a markdown table (read the file, extract header + up to 5 data rows)
+- **JSON files**: If the JSON is an array of objects (tabular), display first 5 entries as a markdown table. If the JSON is a nested structure, display the top-level keys and value types as a summary table (key | type | example value)
+- **Other formats** (parquet, xlsx, pkl): Display only metadata — file size, format, and experiment ID
+- Group previews by experiment ID
+- Link each preview header to the source file: `### [E005_results.csv](data/E005/results/results.csv)`
+- If data_registry is empty, omit Section E entirely
 
 </details>
 
@@ -587,10 +618,29 @@ same count appears in the corresponding translated file. Report any discrepancie
 
    If verification fails, patch Tier 2 to include missing numbers before proceeding to Phase 5.
 
+   **Step 2g — Experiment coverage verification**: Verify that every `status: final` experiment from Phase 0 is referenced in the assembled report. Extract all experiment ID references (pattern: `E\d{3,}`) from the Tier 2 and Tier 3 content. Compare against the full list of final experiment IDs from `data/F{NNN}/experiments.json`.
+   - **Missing experiments**: If any final experiment is not cited in Tier 2, this indicates an unintended incremental report. Print a warning:
+     ```
+     WARNING: Experiment coverage gap — {N} final experiments not referenced in Tier 2:
+       Missing: E005, E008, E012
+       This may indicate an incremental report was generated instead of a comprehensive one.
+     ```
+     Patch: Add missing experiments to the most relevant question section in Tier 2 (based on their `description` field), or create an "Additional Findings" section if no existing question fits.
+   - **Superseded experiments**: Superseded experiments (flagged in Phase 0) must appear as `E010→E017 (superseded)` — verify the arrow notation is present. Missing superseded references are warnings, not errors.
+   - **Pass criterion**: ≥95% of final experiments referenced in Tier 2. 100% referenced in Tier 3 cross-reference matrix (mandatory — Tier 3 lists ALL experiments by design).
+
 3. **Figure path verification**:
    - Extract all `![...](path)` references from the assembled report
    - Check each path exists on disk
    - **If a path is broken**: remove the figure reference from the report and log a warning. Do not block Phase 5 for broken figures, but report them in Phase 8 summary.
+
+3.5. **Data link verification** (Tier 2 only):
+   - Extract all non-figure hyperlinks from Tier 2: pattern `[text](path)` where path does NOT match image extensions (`.png`, `.jpg`, `.jpeg`, `.gif`, `.svg`)
+   - For each extracted data link path, verify:
+     (a) The path exists in `data_registry.json` (match against `original_path` field)
+     (b) The file exists on disk
+   - **Broken data links**: If a data file path does not exist on disk, remove the link from the report (convert to plain text) and log a warning. Do not block Phase 5.
+   - **Orphaned data files**: If `data_registry.json` contains files for experiments covered in Tier 2 questions but no data links were generated, log an informational note (not a blocking error — Agent 2 may have judged the files not relevant).
 
 4. **Save all files** to `data/F{NNN}/`:
    - `F{NNN}_report.md` (assembled) — or `F{NNN}_report_en.md` + `F{NNN}_report_ko.md` when `dual_lang = True`
@@ -1393,7 +1443,7 @@ Cross-language:    {pass/fail} — {number reconciliation details}
 | 1 | Lead (you) | — | MANIFEST findings | Candidate questions | — |
 | 2 | Lead (you) | — | Confirmed questions + MANIFEST | Decision table | 10-15 |
 | 3a | agent-1 | sonnet | Decision table | tier1_decision_brief.md | 20-30 |
-| 3b | agent-2 | opus | Questions + MANIFEST + figures | tier2_evidence_narrative.md | 100-150 |
+| 3b | agent-2 | opus | Questions + MANIFEST + figures + data | tier2_evidence_narrative.md | 100-150 |
 | 3c | agent-3 | haiku | MANIFEST + figures | tier3_technical_reference.md | 60-100 |
 | 3d | agent-4 | sonnet | Tier 1 + MANIFEST descriptions | tier0_plain_language.md | 20-30 |
 | | | | *(sequential after 3a)* | | |
@@ -1426,6 +1476,8 @@ Cross-language:    {pass/fail} — {number reconciliation details}
 | Designer agent rewriting full HTML | Base64-encoded images get silently corrupted by line truncation | Use CSS-extraction pattern: agent outputs `<style>` block only |
 | Embedding large Base64 images without size guard | Reports with 20+ experiments produce >10MB HTML that degrades browser performance | If total figure registry exceeds 10MB, warn the user and consider linking external images instead of embedding |
 | Using "significantly" with p ≥ 0.05 | Incorrect statistical language misleads readers | Scan Tier 2 for "significantly" and verify adjacent p-value is < 0.05; use "practical improvement (p=X, n.s.)" otherwise |
+| Citing data results in Tier 2 without linking to source files | Reviewer reads "AUC 0.92" but cannot verify which file contains that number — must manually search experiment directories | Use "Supporting Data" block with hyperlinks to data_registry files; reviewer clicks link to inspect the source |
+| Generating incremental report when comprehensive was intended | Only new experiments appear in report; stakeholder misses context from earlier experiments | Phase 0 scope declaration forces explicit acknowledgment; Phase 4 step 2g catches coverage gaps |
 | Translating technical terms to Korean | Readers lose the ability to search, reference, or compare with English-language literature; translated terms like "곡선하면적" are unrecognizable | Preserve English for ALL-CAPS abbreviations, method names, units, and MANIFEST verbatim values; add Korean gloss in parentheses on first use for Tier 0 only |
 | Skipping CJK font check before KO PDF generation | PyMuPDF silently renders Korean as replacement rectangles (tofu); PDF passes `size > 0` check but is unreadable | Run CJK font pre-flight before KO PDF conversion; set `ko_pdf_skipped = True` and skip KO PDF if unavailable |
 | Assuming gloss_first parentheticals pass number regex unchanged | Korean glosses like `AUC(모델 성능 지표, 1.0이 최고)` introduce `1.0` as a false orphaned number in Phase 4 verification | Mask gloss_first parentheticals containing Hangul before Step 2a/2c number extraction |
@@ -1454,6 +1506,8 @@ Before declaring completion, verify **ALL** of the following. **If any REQUIRED 
 - [ ] MANIFEST.yaml updated with F{NNN} entry
 - [ ] experiment-log.md updated (if present)
 - [ ] Only experiments with `status: final` are cited (whitelist — reject any other status)
+- [ ] Tier 2 "Supporting Data" links (if present) resolve to valid paths in `data_registry.json`
+- [ ] Tier 2 experiment coverage ≥95% of final experiments (Step 2g passed)
 - [ ] No "significantly" language used alongside p ≥ 0.05 in Tier 2
 - [ ] All Tier 1 numbers trace to a MANIFEST `findings` or `notes` field (no hallucinated numbers)
 - [ ] GUIDE.md exists in `data/F{NNN}/deliverable/` with correct F-number, date, and experiment count
