@@ -184,7 +184,7 @@ bundle / share deliverables
 6. **Auto-detect F-number**: Scan MANIFEST for existing `f###` entries (case-insensitive). Next number = max + 1. Format as `F{NNN}` (e.g., F004).
 7. **Check conversion scripts**: Look for `scripts/md_to_html.py` and `scripts/md_to_pdf.py`. If missing, generate them from embedded templates in Phase 5.
 8. **Create output directory**: `data/F{NNN}/`
-9. **Serialize computed data**: Save figure registry to `data/F{NNN}/figure_registry.json` (agents need this file as input). Save data registry to `data/F{NNN}/data_registry.json` (Phase 6.5 needs this for deliverable packaging). Save experiment summary to `data/F{NNN}/experiments.json` (experiment IDs, descriptions, findings, paths, superseded flags). **Dual-lang config** (when `dual_lang = True`): Save `data/F{NNN}/config.json` with `{"dual_lang": true, "manifest_language": "...", "secondary_lang": "...", "term_policy": "..."}` — downstream phases read this to determine dual-lang behavior on resume.
+9. **Serialize computed data**: Save figure registry to `data/F{NNN}/figure_registry.json` (agents need this file as input). Save data registry to `data/F{NNN}/data_registry.json` (Phase 6.5 needs this for deliverable packaging). Save experiment summary to `data/F{NNN}/experiments.json` (experiment IDs, descriptions, findings, paths, data_dir, superseded flags). **Dual-lang config** (when `dual_lang = True`): Save `data/F{NNN}/config.json` with `{"dual_lang": true, "manifest_language": "...", "secondary_lang": "...", "term_policy": "..."}` — downstream phases read this to determine dual-lang behavior on resume.
 
 ### Phase 1: Question Discovery (hybrid)
 
@@ -1317,6 +1317,8 @@ deliverable_stats = {
        - data/F{NNN}/tier1_decision_brief.md
        - data/F{NNN}/tier2_evidence_narrative.md
        - data/F{NNN}/tier3_technical_reference.md
+       - data/F{NNN}/figure_registry.json
+       - data/F{NNN}/data_registry.json
        - data/F{NNN}/deliverable/
        - data/F{NNN}/F{NNN}_deliverable.zip
      deliverable: data/F{NNN}/deliverable/
