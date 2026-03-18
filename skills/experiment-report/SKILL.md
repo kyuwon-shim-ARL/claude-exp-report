@@ -7,7 +7,7 @@ description: Generate multi-tier synthesis report from MANIFEST.yaml experiments
 
 ## CRITICAL: Mandatory Phase Execution
 
-**You MUST execute ALL phases (0→1→2→3→[3.5]→4→5→6→6.5→7→8). DO NOT stop after Phase 4.** Phase 3.5 runs only when `dual_lang = True` (11 phases total); otherwise the standard 10-phase pipeline applies.
+**You MUST execute ALL phases (0→1→2→3→[3.5]→4→5→6→6.5→6.7→7→8). DO NOT stop after Phase 4.** Phase 3.5 runs only when `dual_lang = True`. Phase 6.7 generates slide decks (dual-language by default). The standard pipeline is 11 phases; with dual_lang it is 12.
 
 The most common failure is stopping after MD assembly (Phase 4) without running HTML/PDF conversion (Phase 5). The report is NOT complete until HTML and PDF files exist on disk. If you skip Phase 5, the user gets only raw Markdown — this defeats the purpose of the plugin. Phase 4 is complete ONLY when Phase 5 has been executed and `F{NNN}_report.html` exists on disk.
 
@@ -1347,7 +1347,111 @@ deliverable_stats = {
 }
 ```
 
-**`--fast` handling**: Phase 6 skip instruction routes through Phase 6.5 — when `--fast` is set, skip Phase 6 but still execute Phase 6.5.
+**`--fast` handling**: Phase 6 skip instruction routes through Phase 6.5 — when `--fast` is set, skip Phase 6 but still execute Phase 6.5. Phase 6.7 slide generation also runs in `--fast` mode (skipping its own designer review).
+
+### Phase 6.7: Slide Generation (Default: ON)
+
+Generate reveal.js HTML slide decks from the workspace tier files. This phase runs **by default** — use `--no-slides` to skip.
+
+**This phase invokes the `slides` skill logic** (see `skills/slides/SKILL.md` for the full template and patterns). The slide generator reads the same workspace files produced by Phases 0-6.5.
+
+**Step 6.7a: Pre-flight**
+```python
+# Check workspace files
+required_files = [
+    f'data/F{NNN}/questions.json',
+    f'data/F{NNN}/tier0_plain_language.md',
+    f'data/F{NNN}/tier1_decision_brief.md',
+    f'data/F{NNN}/tier2_evidence_narrative.md',
+    f'data/F{NNN}/figure_registry.json',
+    f'data/F{NNN}/experiments.json',
+]
+for f in required_files:
+    assert Path(f).exists(), f"Slide pre-flight failed: {f} missing"
+
+print(f">>> Phase 6.7: Generating slide decks...")
+```
+
+**Step 6.7b: Generate primary-language slides**
+
+Follow the `slides` skill Phase 1-2 workflow:
+1. Map tier content to slide sections (Title → Motivation → Methods → Results → Decision Summary → Conclusion → Appendix)
+2. Apply density rules (English or Korean depending on `manifest_language`)
+3. Generate self-contained reveal.js HTML (all JS/CSS inlined, Base64 figures)
+4. Write to `data/F{NNN}/F{NNN}_slides.html`
+
+**Step 6.7c: Designer review (skip if `--fast` or `--no-design`)**
+
+Follow the `slides` skill Phase 3 workflow:
+1. Designer agent generates CSS improvements (CSS-extraction pattern)
+2. Critic agent reviews and refines (2-iteration fixed loop)
+3. Inject refined CSS into slide HTML
+
+**Step 6.7d: Dual-language slides (when `dual_lang = True`)**
+
+Generate secondary-language slides:
+- If `manifest_language == "English"`: generate `F{NNN}_slides_ko.html` from Korean tier files (`*_ko.md`)
+- If `manifest_language == "Korean"`: generate `F{NNN}_slides_en.html` from English tier files (`*_en.md`)
+- Set `<html lang="ko">` for Korean slides (activates CJK CSS)
+- Apply Korean density rules for Korean slides (Tier0:12어절/2b, Tier1:22어절/3b, Tier2:28어절/3b)
+- Reuse designer CSS from Step 6.7c (same pattern as Phase 6 report CSS reuse)
+
+**Output naming**:
+```
+data/F{NNN}/F{NNN}_slides.html           # Primary language
+data/F{NNN}/F{NNN}_slides_en.html        # English (if dual_lang)
+data/F{NNN}/F{NNN}_slides_ko.html        # Korean (if dual_lang)
+```
+
+**Step 6.7e: Integrate with deliverable**
+
+If `data/F{NNN}/deliverable/` exists (created by Phase 6.5):
+```python
+import shutil
+for slides_file in slide_outputs:
+    shutil.copy2(slides_file, f'data/F{NNN}/deliverable/')
+
+# Append to GUIDE.md
+guide_path = Path(f'data/F{NNN}/deliverable/GUIDE.md')
+if guide_path.exists():
+    with open(guide_path, 'a') as f:
+        f.write("""
+## Slide Deck
+
+The slide deck provides a presentation-ready summary of this report.
+
+### Viewing
+- Open `F{NNN}_slides.html` in any modern browser
+- Navigate: Arrow keys or click left/right halves of the screen
+- Speaker notes: Press `S` key
+
+### PDF Export
+1. Open the slides HTML in Chrome/Chromium
+2. Add `?print-pdf` to the URL
+3. Press Ctrl+P → Landscape, No margins, Background graphics ON
+4. Save as PDF
+""")
+```
+
+Update ZIP to include slides:
+```python
+import zipfile
+zip_path = Path(f'data/F{NNN}/F{NNN}_deliverable.zip')
+if zip_path.exists():
+    with zipfile.ZipFile(zip_path, 'a') as zf:
+        for slides_file in slide_outputs:
+            zf.write(slides_file, Path(slides_file).name)
+```
+
+**Step 6.7f: Print checkpoint**
+```
+>>> Phase 6.7 complete: {len(slide_outputs)} slide deck(s) generated
+>>>   Primary: F{NNN}_slides.html ({size_kb} KB, {slide_count} slides)
+>>>   Korean:  F{NNN}_slides_ko.html ({size_kb} KB)  # if dual_lang
+>>>   English: F{NNN}_slides_en.html ({size_kb} KB)   # if dual_lang
+```
+
+**`--no-slides` handling**: If the user passes `--no-slides` in their invocation, skip Phase 6.7 entirely. Print: `>>> Phase 6.7: Skipped (--no-slides)`.
 
 ### Phase 7: Bookkeeping
 
@@ -1369,6 +1473,7 @@ deliverable_stats = {
        - data/F{NNN}/tier3_technical_reference.md
        - data/F{NNN}/figure_registry.json
        - data/F{NNN}/data_registry.json
+       - data/F{NNN}/F{NNN}_slides.html  # or _en.html + _ko.html
        - data/F{NNN}/deliverable/
        - data/F{NNN}/F{NNN}_deliverable.zip
      deliverable: data/F{NNN}/deliverable/
@@ -1406,11 +1511,14 @@ Assembled: data/F{NNN}/F{NNN}_report.md ({total_lines} lines)
 HTML:      data/F{NNN}/F{NNN}_report.html ({size} KB)
 PDF:       data/F{NNN}/F{NNN}_report.pdf ({size} KB, {pages} pages)
 
+Slides:    data/F{NNN}/F{NNN}_slides.html ({slide_size_kb} KB, {slide_count} slides)
+
 Deliverable: data/F{NNN}/deliverable/ ({total_size_kb} KB, {file_count} files)
   Figures:       {figure_count} images
   Data:          {data_file_count} files ({total_data_size_kb} KB)
+  Slides:        {slide_file_count} slide deck(s)
   ZIP:           data/F{NNN}/F{NNN}_deliverable.zip ({zip_size_kb} KB)
-  Contents:      MD + HTML + PDF + figures/ + data/ + tiers/ + GUIDE.md
+  Contents:      MD + HTML + PDF + slides + figures/ + data/ + tiers/ + GUIDE.md
 
 Designer:      CSS/layout review applied
 Verification:  {pass/fail} — {details}
@@ -1430,6 +1538,9 @@ KO Report:
   Assembled: data/F{NNN}/F{NNN}_report_ko.md ({lines} lines)
   HTML:      data/F{NNN}/F{NNN}_report_ko.html ({size} KB)
   PDF:       data/F{NNN}/F{NNN}_report_ko.pdf ({size} KB) — or "Skipped: CJK font unavailable"
+
+EN Slides:   data/F{NNN}/F{NNN}_slides_en.html ({size} KB, {count} slides)
+KO Slides:   data/F{NNN}/F{NNN}_slides_ko.html ({size} KB, {count} slides)
 
 Verification (EN): {pass/fail}
 Verification (KO): {pass/fail}

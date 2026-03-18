@@ -1,7 +1,7 @@
 {
   "name": "exp-report",
   "description": "Multi-tier experiment synthesis report generator from MANIFEST.yaml with parallel agents, designer review, and auto HTML+PDF conversion",
-  "version": "1.16.0",
+  "version": "1.17.0",
   "author": {
     "name": "kyuwon-shim-ARL"
   },

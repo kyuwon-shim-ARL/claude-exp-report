@@ -1,0 +1,7 @@
+# OMC Experiment Workflow
+outputs/**/*.csv
+outputs/**/*.png
+outputs/**/*.pkl
+outputs/**/*.html
+!outputs/MANIFEST.yaml
+.omc-config.sh

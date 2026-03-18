@@ -1,0 +1,43 @@
+version: 3
+updated: "2026-03-18T13:10:00Z"
+scan_paths:
+  - outputs/
+foundations: {}
+milestone:
+  name: "v1.17.0 - HTML Slide Generation"
+  description: "reveal.js 기반 HTML 슬라이드 보고서 시스템 추가"
+  started: "2026-03-18"
+experiments:
+  e001:
+    description: "아키텍처 결정 - Phase 9 vs /exp-report:slides 별도 skill"
+    status: final
+    issue: 19
+    path: outputs/e001/
+    findings: "별도 skill (skills/slides/SKILL.md) 으로 결정. 기존 10-phase 파이프라인 변경 없이 data/F{NNN}/ 워크스페이스를 읽는 downstream consumer 방식."
+  e002:
+    description: "재사용 가능 Designer 비평 루프 구현 (2-iteration 고정)"
+    status: final
+    issue: 20
+    path: outputs/e002/
+    depends_on: [e001]
+    findings: "2-iteration 고정 루프 구현 (Designer CSS → Critic 비평+수정). SKILL.md Phase 3에 포함. convergence score 대신 고정 반복으로 예측성 확보."
+  e003:
+    description: "Core 슬라이드 생성 - Tier→reveal.js 매핑 + 6 패턴"
+    status: final
+    issue: 21
+    path: outputs/e003/
+    depends_on: [e001, e002]
+    findings: "reveal.js 5.1.0 기반 자기완결 HTML. 6가지 패턴(KeyFinding, Comparison, Dashboard, EvidenceNarrative, Summary, Appendix). JS/CSS 인라인으로 오프라인 지원. Base64 이미지 임베딩."
+  e004:
+    description: "Deliverable 통합 - ZIP 패키징 + GUIDE.md 업데이트"
+    status: final
+    issue: 22
+    path: outputs/e004/
+    depends_on: [e003]
+    findings: "SKILL.md Phase 5에 deliverable 통합 포함. slides HTML → deliverable/ 복사, GUIDE.md에 슬라이드 사용법+PDF변환 안내 추가, ZIP 업데이트."
+  e005:
+    description: "한국어 슬라이드 밀도 보정 연구"
+    status: final
+    issue: 23
+    path: outputs/e005/
+    findings: "영어 대비 37.5% 감소 (1/1.6 ratio). Tier0:12어절/2b, Tier1:22어절/3b, Tier2:28어절/3b, Tier3:37어절/4b. CJK CSS: line-height 1.75, word-break keep-all, font-size 1.05em, letter-spacing -0.02em."

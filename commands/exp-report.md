@@ -20,6 +20,7 @@ Generate a synthesis report from all `status: final` experiments in MANIFEST.yam
 5. Assembles into single report, verifies numeric consistency across tiers
 6. Converts to HTML + PDF with designer readability review
 6.5. Packages deliverable folder (report + figures + GUIDE.md + ZIP)
+6.7. Generates reveal.js slide decks (EN + KO, dual-language by default)
 7. Updates MANIFEST.yaml and experiment-log.md
 
 ## Usage
@@ -36,6 +37,7 @@ Generate a synthesis report from all `status: final` experiments in MANIFEST.yam
 - Python with `markdown` package (for HTML conversion; regex fallback available)
 - PyMuPDF >= 1.21 / `fitz` package (for PDF conversion, requires Story API; optional)
 - Use `--fast` or `--no-design` to skip the designer CSS review phase
+- Use `--no-slides` to skip slide deck generation (Phase 6.7)
 
 ## Output
 
@@ -48,6 +50,9 @@ data/F{NNN}/
   tier1_decision_brief.md      # Tier 1 source
   tier2_evidence_narrative.md  # Tier 2 source
   tier3_technical_reference.md # Tier 3 source
+  F{NNN}_slides.html           # reveal.js slide deck (primary language)
+  F{NNN}_slides_en.html        # English slides (if dual_lang)
+  F{NNN}_slides_ko.html        # Korean slides (if dual_lang)
   F{NNN}_deliverable.zip       # Shareable deliverable archive
   deliverable/                 # Stakeholder-ready folder
     F{NNN}_report.html         #   Self-contained report
