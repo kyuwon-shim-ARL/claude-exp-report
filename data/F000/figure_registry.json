@@ -1,0 +1,40 @@
+{
+  "figures": [
+    {
+      "original_path": "data/F000/figures/xgb_vs_rf_roc.png",
+      "exp_id": "e001",
+      "stem": "xgb_vs_rf_roc",
+      "suffix": ".png",
+      "deliverable_name": "xgb_vs_rf_roc.png",
+      "size_bytes": 45000,
+      "question_ids": ["q1"]
+    },
+    {
+      "original_path": "data/F000/figures/nested_cv_diagram.png",
+      "exp_id": "e003",
+      "stem": "nested_cv_diagram",
+      "suffix": ".png",
+      "deliverable_name": "nested_cv_diagram.png",
+      "size_bytes": 32000,
+      "question_ids": ["q2"]
+    },
+    {
+      "original_path": "data/F000/figures/shap_importance.png",
+      "exp_id": "e002",
+      "stem": "shap_importance",
+      "suffix": ".png",
+      "deliverable_name": "shap_importance.png",
+      "size_bytes": 55000,
+      "question_ids": ["q3"]
+    },
+    {
+      "original_path": "data/F000/figures/y_randomization_dist.png",
+      "exp_id": "e003",
+      "stem": "y_randomization_dist",
+      "suffix": ".png",
+      "deliverable_name": "y_randomization_dist.png",
+      "size_bytes": 38000,
+      "question_ids": ["q4"]
+    }
+  ]
+}

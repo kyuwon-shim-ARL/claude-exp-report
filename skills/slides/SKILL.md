@@ -66,6 +66,8 @@ The slide deck is a **downstream consumer** of the report workspace — not a pi
            b64 = base64.b64encode(f.read()).decode()
        return f"data:{mime};base64,{b64}"
    ```
+   For each figure, also generate a **caption string** from existing registry fields:
+   `"{exp_id}: {stem} | Source: {exp_description}"` where `exp_description` comes from `experiments.json` (field: try `"description"`, then `"exp_description"`, then `"title"`; use first non-null). Store captions alongside Base64 data for use in `<figcaption>` elements.
 
 5. **Print scope**:
    ```
@@ -118,6 +120,13 @@ Map tier content to slide sections using the **IMRaD narrative arc**:
 
 Korean bullet count drops by 1 at Tier 2/3 due to CJK line-height (1.75 vs 1.5).
 
+#### Density Overflow Rule
+
+When extracted content exceeds the density limit for its tier:
+1. **Distill** to fit: compress to the word/bullet limit, keeping only the verdict and top supporting metrics.
+2. **Overflow** the full original text into `<aside class="notes">` (speaker notes). Never truncate — move.
+3. This applies to both English (word count) and Korean (어절 count) limits identically.
+
 #### Content Extraction Rules
 
 For each slide, extract content from the corresponding tier file:
@@ -131,9 +140,10 @@ For each slide, extract content from the corresponding tier file:
 4. **Results slides** (1 per question):
    - Parse `questions.json` for question list and order
    - For each question, extract the corresponding section from `tier2_evidence_narrative.md`
+   - **Down-distillation**: Compress the Tier 2 extract to **Tier 1 register** (≤35 words / ≤3 bullets in English; ≤22 어절 / ≤3 bullets in Korean). Keep only the verdict and top 2-3 supporting metrics. Apply the Density Overflow Rule for any excess.
    - **Conclusion-first title**: Use the verdict/conclusion as the slide title (not the question)
    - **Figure**: If `figure_registry.json` maps a figure to this question's experiments, embed it. If no figure → text-only slide with enlarged verdict text.
-   - **Speaker notes**: Full Tier 2 verdict + evidence summary (2-3 sentences)
+   - **Speaker notes**: Full Tier 2 section (unabridged) — this is where the technical detail lives
 
 5. **Decision Summary slide**:
    - Extract decision table from `tier1_decision_brief.md`
@@ -157,6 +167,20 @@ Each slide maps to one of these archetypal patterns:
 | **EvidenceNarrative** | Per-question results | Medium-High | Figure + bullets |
 | **Summary** | Conclusion, Takeaway | Low | Numbered list, bold verdict |
 | **Appendix** | Per-experiment technical | High | Dense table, small font |
+| **SectionTransition** | Section breaks, wrapup | Minimal | Full-bleed accent bg, 1-sentence recap |
+
+#### SectionTransition Auto-Insert Rules
+
+- After every **3 consecutive Results slides**, auto-insert a SectionTransition slide that recaps the key findings so far.
+- **Pre-Conclusion wrapup**: Always insert a SectionTransition between Decision Summary and Conclusion (recap the deck's main takeaway before closing).
+
+#### Narrative Thread (Phase 1 prerequisite)
+
+Before mapping content to slides, extract two named strings from `tier0_plain_language.md`:
+- **`hook_question`**: The motivating question or problem statement (from the opening paragraph).
+- **`takeaway`**: The single most important conclusion (from the closing paragraph).
+
+These MUST appear verbatim: `hook_question` in the Motivation slide, `takeaway` in the Conclusion slide. The SectionTransition before Conclusion should bridge from evidence to `takeaway`.
 
 ### Phase 2: HTML Generation
 
@@ -255,6 +279,7 @@ REVEAL_HTML_TEMPLATE = '''<!DOCTYPE html>
 .slide-evidence .evidence-text { font-size: 0.85em; }
 .slide-evidence .evidence-text li { margin: 6px 0; }
 .slide-evidence .evidence-figure img { max-width: 100%; max-height: 50vh; border-radius: 4px; }
+.slide-evidence .evidence-figure figcaption { font-size: 0.6em; color: #95a5a6; text-align: center; margin-top: 4px; }
 
 /* === Summary pattern === */
 .slide-summary { text-align: left; }
@@ -266,6 +291,11 @@ REVEAL_HTML_TEMPLATE = '''<!DOCTYPE html>
 .slide-appendix { text-align: left; font-size: 0.75em; }
 .slide-appendix table { font-size: 0.85em; width: 95%; }
 .slide-appendix h2 { font-size: 1.2em; }
+
+/* === SectionTransition pattern === */
+.slide-transition { text-align: center; background: linear-gradient(135deg, #2c3e50 0%, #3498db 100%); color: #fff; }
+.slide-transition h2 { color: #fff; font-size: 1.6em; font-weight: 700; }
+.slide-transition .recap { font-size: 0.9em; color: #ecf0f1; max-width: 70%; margin: 0.5em auto 0; }
 
 /* === Speaker notes === */
 aside.notes { display: none; }
@@ -422,7 +452,7 @@ Each slide is a `<section>` element. Use `data-auto-animate` for smooth transiti
 ```html
 <section class="slide-keyfinding">
   <h2>Why This Matters</h2>
-  <p class="verdict">{{TIER0_OPENING_VERDICT}}</p>
+  <p class="verdict">{{HOOK_QUESTION}}</p>
   <p class="subtext">{{TIER0_CONTEXT_SENTENCE}}</p>
   <aside class="notes">{{TIER0_FIRST_PARAGRAPH_FULL}}</aside>
 </section>
@@ -441,7 +471,10 @@ Each slide is a `<section>` element. Use `data-auto-animate` for smooth transiti
       </ul>
     </div>
     <div class="evidence-figure">
-      <img src="{{BASE64_FIGURE}}" alt="{{FIGURE_ALT}}">
+      <figure>
+        <img src="{{BASE64_FIGURE}}" alt="{{FIGURE_ALT}}">
+        <figcaption>{{EXP_ID}}: {{FIGURE_STEM}} | Source: {{EXP_DESCRIPTION}}</figcaption>
+      </figure>
     </div>
   </div>
   <aside class="notes">{{TIER2_FULL_SECTION}}</aside>
@@ -466,7 +499,7 @@ Each slide is a `<section>` element. Use `data-auto-animate` for smooth transiti
 **Conclusion slide** (Summary pattern):
 ```html
 <section class="slide-summary">
-  <h2>Conclusions & Recommendations</h2>
+  <h2>{{TAKEAWAY}}</h2>
   <ol class="summary-list">
     <li><strong>{{RECOMMENDATION_1}}</strong></li>
     <li>{{RECOMMENDATION_2}}</li>
@@ -509,6 +542,14 @@ Each slide is a `<section>` element. Use `data-auto-animate` for smooth transiti
     <!-- rows from Tier 3 -->
   </table>
   <aside class="notes">{{TIER3_FULL_SECTION}}</aside>
+</section>
+```
+
+**SectionTransition slide** (inserted per auto-insert rules):
+```html
+<section class="slide-transition">
+  <h2>{{RECAP_TITLE}}</h2>
+  <p class="recap">{{ONE_SENTENCE_RECAP_OF_FINDINGS_SO_FAR}}</p>
 </section>
 ```
 
@@ -596,6 +637,9 @@ Evaluate these 5 dimensions and rate each HIGH/MEDIUM/LOW severity:
 3. INFO_DENSITY: No slide exceeds density limits (Tier0:20w/2b, Tier1:35w/3b, Tier2:45w/4b)
 4. RESPONSIVE: Layout works at 1280x720 AND 1024x768 AND mobile widths
 5. COLOR_CONSISTENCY: <=5 distinct colors, consistent use across patterns
+6. NARRATIVE_ARC: Does Motivation's hook_question echo in Conclusion's takeaway? Are Results ordered by impact?
+7. CONTENT_REGISTER: Are main-deck slides at Tier 0/1 register (not Tier 2 technical detail)?
+8. CITATION_PRESENCE: Do all figures have <figcaption> with experiment source?
 
 Output format:
 CRITIQUE_RESULT:
@@ -604,6 +648,9 @@ CRITIQUE_RESULT:
   INFO_DENSITY: [HIGH|MEDIUM|LOW] - [description]
   RESPONSIVE: [HIGH|MEDIUM|LOW] - [description]
   COLOR_CONSISTENCY: [HIGH|MEDIUM|LOW] - [description]
+  NARRATIVE_ARC: [HIGH|MEDIUM|LOW] - [description]
+  CONTENT_REGISTER: [HIGH|MEDIUM|LOW] - [description]
+  CITATION_PRESENCE: [HIGH|MEDIUM|LOW] - [description]
 
 SPECIFIC_FIXES:
   - [CSS fix 1]
@@ -660,11 +707,14 @@ If `config.json` has `dual_lang: true`:
      - Speaker notes: Press `S` key
      - Overview: Press `O` key (if full reveal.js loaded)
 
-     ### PDF Export
-     1. Open the slides HTML in Chrome/Chromium
-     2. Add `?print-pdf` to the URL (e.g., `file:///path/F001_slides.html?print-pdf`)
-     3. Press Ctrl+P → set Landscape, No margins, Background graphics ON
-     4. Save as PDF
+     ### PDF Export (Playwright headless)
+     ```bash
+     npx playwright pdf "file://$(pwd)/data/F{NNN}/F{NNN}_slides.html?print-pdf" \
+       "data/F{NNN}/F{NNN}_slides.pdf" --wait-for-timeout 3000
+     ```
+     - The `?print-pdf` query param triggers reveal.js print layout (landscape handled by reveal.js CSS)
+     - Playwright's headless Chromium renders slides with full CSS/font fidelity
+     - If Playwright unavailable: open HTML in Chrome, add `?print-pdf`, Ctrl+P → Save as PDF
      ```
    - Update ZIP if it exists: add slide HTML to the archive
 
@@ -716,3 +766,8 @@ Before declaring completion, verify:
 - [ ] Full decision table appears in Appendix
 - [ ] Motivation and Conclusion slides share the key finding (primacy+recency)
 - [ ] If `deliverable/` exists: slides copied in and GUIDE.md updated
+- [ ] Results slides use Tier 1 register (≤35 words / ≤22 어절, ≤3 bullets per slide)
+- [ ] SectionTransition slides present after every 3+ consecutive Results
+- [ ] hook_question in Motivation echoes as takeaway in Conclusion
+- [ ] All figures have `<figcaption>` with experiment source
+- [ ] Density overflow content moved to speaker notes (not truncated)

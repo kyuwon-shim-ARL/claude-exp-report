@@ -194,7 +194,7 @@ bundle / share deliverables
    ```
    **Design rationale — why `data_dir` instead of unconditional glob**: Figures use an unconditional `figures/*` glob because `figures/` directories have a strong semantic contract (publication-ready visualizations) with a <5% false-positive rate. Data directories have 30-60% false-positive rates (intermediate results, config files, caches with `.pkl`/`.json`/`.yaml` extensions). The `data_dir` field preserves author intentionality — the experimenter explicitly designates which directory contains deliverable-ready data. This maintains MANIFEST as the single source of truth while reducing friction (no need to list every CSV individually). **Symlink guard**: Symlinks are excluded in both primary and supplementary paths (figure_registry and data_registry alike) to avoid aliased duplicates. **`p.is_file()` guard**: The supplementary glob uses `p.is_file()` to exclude subdirectory entries — the glob is intentionally non-recursive (depth 1 only) to avoid capturing intermediate files in nested subdirectories. **Size warning**: Compute `total_data_size_bytes` from the registry. If total exceeds 200 MB, warn the user that the deliverable will be large (but do not block — user explicitly allows large data files). **Zero-data edge case**: If no data files match the allowlist, `data_registry` is empty — this is valid. Phase 6.5 will skip creating the `data/` directory and GUIDE.md will omit the data section.
 6. **Auto-detect F-number**: Scan MANIFEST for existing `f###` entries (case-insensitive). Next number = max + 1. Format as `F{NNN}` (e.g., F004).
-7. **Check conversion scripts**: Look for `scripts/md_to_html.py` and `scripts/md_to_pdf.py`. If missing, generate them from embedded templates in Phase 5.
+7. **Check conversion scripts**: Look for `scripts/md_to_html.py`. If missing, generate from embedded template in Phase 5. PDF conversion uses Playwright CLI (no script needed).
 8. **Create output directory**: `data/F{NNN}/`
 9. **Serialize computed data**: Save figure registry to `data/F{NNN}/figure_registry.json` (agents need this file as input). Save data registry to `data/F{NNN}/data_registry.json` (Phase 6.5 needs this for deliverable packaging). Save experiment summary to `data/F{NNN}/experiments.json` (experiment IDs, descriptions, findings, paths, data_dir, superseded flags). **Dual-lang config** (when `dual_lang = True`): Save `data/F{NNN}/config.json` with `{"dual_lang": true, "manifest_language": "...", "secondary_lang": "...", "term_policy": "..."}` — downstream phases read this to determine dual-lang behavior on resume.
 
@@ -656,58 +656,34 @@ same count appears in the corresponding translated file. Report any discrepancie
 
 **Step 5a: Ensure conversion scripts exist**
 - If `scripts/md_to_html.py` exists → use it
-- If `scripts/md_to_pdf.py` exists → use it
-- If either is missing → **generate from embedded templates below** (create `scripts/` directory if needed)
+- If missing → **generate from embedded template below** (create `scripts/` directory if needed)
+- PDF conversion uses Playwright CLI — no Python script needed
 
-**Step 5b: Check Python dependencies**
+**Step 5b: Check dependencies**
 ```bash
 python -c "import markdown" 2>/dev/null || echo "WARNING: 'markdown' package not installed. Install with: pip install markdown"
-python -c "import fitz" 2>/dev/null || echo "WARNING: 'PyMuPDF' package not installed. Install with: pip install PyMuPDF"
+npx playwright --version 2>/dev/null || echo "WARNING: Playwright not installed. Install with: npm install -g playwright && npx playwright install chromium"
 ```
 - If `markdown` is missing: proceed with HTML conversion anyway (script has regex fallback)
-- If `fitz` is missing: the PDF script raises `ImportError` at runtime — no pre-intervention needed. Always run both scripts as shown in Step 5c. Continue to Phase 6
+- If Playwright is missing: print install instructions, skip PDF generation, continue to Phase 6
 
-**Step 5c: Run conversions**
+**Step 5c: Run conversions (MD → HTML → PDF)**
+
+First convert MD to HTML, then use Playwright to convert HTML to PDF:
 ```bash
-python scripts/md_to_html.py data/F{NNN}/F{NNN}_report.md &
-python scripts/md_to_pdf.py data/F{NNN}/F{NNN}_report.md &
-wait
+# Step 1: MD → HTML
+python scripts/md_to_html.py data/F{NNN}/F{NNN}_report.md
+# Step 2: HTML → PDF via Playwright headless Chromium
+npx playwright pdf "file://$(pwd)/data/F{NNN}/F{NNN}_report.html" "data/F{NNN}/F{NNN}_report.pdf" --wait-for-timeout 3000
 ```
-**Dual-lang Step 5c**: When `dual_lang = True`, convert both language reports. First, run a CJK font pre-flight check for Korean PDF:
-```python
-# CJK font pre-check using pixel-variance render test (before launching parallel conversions)
-# Simple insert_text return-code checks fail silently in containers — use actual pixel inspection.
-ko_pdf_skipped = False
-try:
-    import fitz
-    doc = fitz.open(); page = doc.new_page(width=200, height=100)
-    page.insert_text((10, 50), "한글테스트", fontsize=24)
-    pix = page.get_pixmap(dpi=72)
-    samples = pix.samples  # raw pixel bytes
-    # Check pixel variance: if CJK font rendered, pixels will have non-trivial variance
-    # A blank/tofu page has near-zero variance (all white or uniform blocks)
-    pixel_values = list(samples[::4])  # sample every 4th byte (one channel)
-    mean_val = sum(pixel_values) / len(pixel_values)
-    variance = sum((v - mean_val) ** 2 for v in pixel_values) / len(pixel_values)
-    if variance < 10.0:  # threshold: tofu/blank renders have variance < 1.0
-        print("WARNING: CJK font not available (pixel variance test failed). Korean PDF will be skipped.")
-        ko_pdf_skipped = True
-    doc.close()
-except Exception:
-    ko_pdf_skipped = True
-```
-Then launch parallel conversions:
+**Dual-lang Step 5c**: When `dual_lang = True`, convert both language reports in parallel:
 ```bash
+# Step 1: MD → HTML (parallel)
 python scripts/md_to_html.py data/F{NNN}/F{NNN}_report_en.md &
 python scripts/md_to_html.py data/F{NNN}/F{NNN}_report_ko.md &
-python scripts/md_to_pdf.py data/F{NNN}/F{NNN}_report_en.md &
-# Only launch KO PDF if CJK fonts available
-if [ "$KO_PDF_SKIPPED" != "true" ]; then
-    python scripts/md_to_pdf.py data/F{NNN}/F{NNN}_report_ko.md &
-fi
 wait
 ```
-**Korean HTML font stack**: After conversion, prepend CJK fonts to the Korean HTML `<style>` body rule:
+**Korean HTML font stack**: After HTML conversion, prepend CJK fonts to the Korean HTML `<style>` body rule:
 ```python
 if dual_lang:
     ko_html = Path(f'data/F{NNN}/F{NNN}_report_ko.html').read_text()
@@ -715,6 +691,14 @@ if dual_lang:
     ko_html = ko_html.replace('</head>', f'{ko_font_css}\n</head>')
     Path(f'data/F{NNN}/F{NNN}_report_ko.html').write_text(ko_html)
 ```
+Then convert HTML to PDF via Playwright (parallel):
+```bash
+# Step 2: HTML → PDF via Playwright (parallel, CJK handled natively by Chromium)
+npx playwright pdf "file://$(pwd)/data/F{NNN}/F{NNN}_report_en.html" "data/F{NNN}/F{NNN}_report_en.pdf" --wait-for-timeout 3000 &
+npx playwright pdf "file://$(pwd)/data/F{NNN}/F{NNN}_report_ko.html" "data/F{NNN}/F{NNN}_report_ko.pdf" --wait-for-timeout 3000 &
+wait
+```
+**Note**: Playwright's headless Chromium renders CJK fonts natively — no pre-flight font check needed. Korean PDF is always generated.
 
 **Step 5d: Verify outputs (MUST check before proceeding)**
 ```bash
@@ -724,8 +708,8 @@ ls -la data/F{NNN}/F{NNN}_report.html data/F{NNN}/F{NNN}_report.pdf 2>&1
 - `F{NNN}_report.pdf` size > 0 → proceed
 - If HTML is missing or empty → **STOP and debug** (check script output for errors)
 - **Content-quality spot-check**: If the source MD contains pipe-table syntax (`|...|`), verify `<table>` appears in the HTML output. If not, the fallback failed to convert tables — install `markdown` package and retry.
-- If PDF is missing → log warning but continue (PDF requires PyMuPDF)
-- **Dual-lang Step 5d**: Verify both `_en.html` and `_ko.html` exist and size > 0. For KO PDF: if `ko_pdf_skipped = True`, the absence is expected (log "Korean PDF skipped: CJK font unavailable") — do not treat as failure.
+- If PDF is missing → log warning but continue (Playwright may not be installed)
+- **Dual-lang Step 5d**: Verify both `_en.html` and `_ko.html` exist and size > 0. PDF verification: check both `_en.pdf` and `_ko.pdf` exist and size > 0.
 
 #### Embedded Conversion Script Templates
 
@@ -857,91 +841,14 @@ if __name__ == '__main__':
     a = ap.parse_args(); o = convert(a.input, a.output); print(f"OK: {o} ({o.stat().st_size/1024:.1f} KB)")
 ```
 
-If `scripts/md_to_pdf.py` is missing, generate this generic version:
-
-```python
-#!/usr/bin/env python3
-"""Convert Markdown reports to PDF using PyMuPDF Story API.
-
-Usage:
-    python scripts/md_to_pdf.py report.md
-    python scripts/md_to_pdf.py report.md --output output.pdf
-"""
-import argparse, re, sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).parent.parent.resolve()
-
-PDF_CSS = """
-body { font-family: sans-serif; font-size: 11pt; line-height: 1.5; color: #333; }
-h1 { border-bottom: 2px solid #2c3e50; padding-bottom: 8pt; color: #2c3e50; font-size: 18pt; }
-h2 { color: #2c3e50; font-size: 14pt; margin-top: 16pt; }
-h3 { color: #34495e; font-size: 12pt; }
-table { border-collapse: collapse; width: 100%; font-size: 9pt; margin: 12pt 0; }
-th { background: #2c3e50; color: white; padding: 6pt 8pt; text-align: left; }
-td { border: 1px solid #ddd; padding: 4pt 8pt; }
-img { max-width: 80%; display: block; margin: 12pt auto; }
-pre { background: #f5f5f5; border: 1px solid #ddd; padding: 8pt; font-family: monospace; font-size: 8pt; }
-code { background: #f5f5f5; padding: 2pt 4pt; font-family: monospace; font-size: 9pt; }
-pre code { background: none; padding: 0; }
-blockquote { border-left: 3pt solid #2c3e50; padding-left: 12pt; color: #555; font-style: italic; }
-ul, ol { margin: 8pt 0; padding-left: 20pt; }
-"""
-
-def md_to_html(md_text):
-    try:
-        import markdown
-        html = markdown.Markdown(extensions=['tables','fenced_code']).convert(md_text)
-    except ImportError:
-        html = md_text
-        # Pipe tables
-        def table_repl(m):
-            rows = [r.strip() for r in m.group(0).strip().split('\n') if r.strip()]
-            if len(rows) < 2: return m.group(0)
-            hdr = [c.strip() for c in rows[0].strip('|').split('|')]
-            out = '<table><thead><tr>' + ''.join(f'<th>{c}</th>' for c in hdr) + '</tr></thead><tbody>'
-            for row in rows[2:]:
-                cells = [c.strip() for c in row.strip('|').split('|')]
-                out += '<tr>' + ''.join(f'<td>{c}</td>' for c in cells) + '</tr>'
-            return out + '</tbody></table>'
-        html = re.sub(r'(?:^\|.+\|$\n?){2,}', table_repl, html, flags=re.MULTILINE)
-        html = re.sub(r'^### (.+)$', r'<h3>\1</h3>', html, flags=re.MULTILINE)
-        html = re.sub(r'^## (.+)$', r'<h2>\1</h2>', html, flags=re.MULTILINE)
-        html = re.sub(r'^# (.+)$', r'<h1>\1</h1>', html, flags=re.MULTILINE)
-        html = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', html)
-    def fix_img(m):
-        alt, src = m.group(1), m.group(2)
-        if src.startswith(('http','data:')): return f'<img src="{src}" alt="{alt}"/>'
-        p = (PROJECT_ROOT / src).resolve()
-        return f'<img src="file://{p}" alt="{alt}"/>' if p.exists() else f'<img src="{src}" alt="{alt}"/>'
-    html = re.sub(r'!\[([^\]]*)\]\(([^)]+)\)', fix_img, html)
-    html = re.sub(r'<img([^>]*)src="([^"]+)"', lambda m: m.group(0) if m.group(2).startswith(('http','file://','data:')) else m.group(0).replace(f'src="{m.group(2)}"', f'src="file://{(PROJECT_ROOT/m.group(2)).resolve()}"') if (PROJECT_ROOT/m.group(2)).resolve().exists() else m.group(0), html)
-    return html
-
-def generate_pdf(md_path, output_path):
-    import fitz
-    if not hasattr(fitz, 'Story'):
-        print(f"Error: PyMuPDF >= 1.21 required for Story API (found {fitz.version[0]})", file=sys.stderr)
-        print("Upgrade: pip install --upgrade PyMuPDF", file=sys.stderr)
-        sys.exit(1)
-    body = md_to_html(md_path.read_text(encoding='utf-8'))
-    doc = f'<!DOCTYPE html><html><head><meta charset="UTF-8"><style>{PDF_CSS}</style></head><body>{body}</body></html>'
-    story = fitz.Story(html=doc)
-    writer = fitz.DocumentWriter(str(output_path))
-    pw, ph, m = 595, 842, 72
-    pages = 0; more = True
-    while more:
-        pages += 1; dev = writer.begin_page(fitz.Rect(0,0,pw,ph))
-        more, _ = story.place(fitz.Rect(m,m,pw-m,ph-m)); story.draw(dev); writer.end_page()
-    writer.close()
-    print(f"OK: {output_path} ({output_path.stat().st_size/1024:.1f} KB, {pages} pages)")
-
-if __name__ == '__main__':
-    ap = argparse.ArgumentParser(); ap.add_argument('input', type=Path); ap.add_argument('-o','--output', type=Path)
-    a = ap.parse_args(); i = Path(a.input).resolve()
-    if not i.exists(): print(f"Error: {i}", file=sys.stderr); sys.exit(1)
-    o = Path(a.output).resolve() if a.output else i.with_suffix('.pdf'); o.parent.mkdir(parents=True, exist_ok=True)
-    generate_pdf(i, o)
+**PDF conversion uses Playwright CLI** — no embedded Python script needed. The HTML→PDF conversion command is:
+```bash
+npx playwright pdf "file://$(pwd)/path/to/report.html" "path/to/report.pdf" --wait-for-timeout 3000
+```
+Playwright's headless Chromium renders the same HTML file used for browser viewing, ensuring visual fidelity (tables, images, CJK fonts all work natively). If Playwright is not installed, print:
+```
+WARNING: Playwright not installed. PDF generation skipped.
+Install with: npm install -g playwright && npx playwright install chromium
 ```
 
 ### Phase 6: Designer Review (CSS-extraction pattern) — Optional with `--fast`
@@ -1590,7 +1497,7 @@ Cross-language:    {pass/fail} — {number reconciliation details}
 | Citing data results in Tier 2 without linking to source files | Reviewer reads "AUC 0.92" but cannot verify which file contains that number — must manually search experiment directories | Use "Supporting Data" block with hyperlinks to data_registry files; reviewer clicks link to inspect the source |
 | Generating incremental report when comprehensive was intended | Only new experiments appear in report; stakeholder misses context from earlier experiments | Phase 0 scope declaration forces explicit acknowledgment; Phase 4 step 2g catches coverage gaps |
 | Translating technical terms to Korean | Readers lose the ability to search, reference, or compare with English-language literature; translated terms like "곡선하면적" are unrecognizable | Preserve English for ALL-CAPS abbreviations, method names, units, and MANIFEST verbatim values; add Korean gloss in parentheses on first use for Tier 0 only |
-| Skipping CJK font check before KO PDF generation | PyMuPDF silently renders Korean as replacement rectangles (tofu); PDF passes `size > 0` check but is unreadable | Run CJK font pre-flight before KO PDF conversion; set `ko_pdf_skipped = True` and skip KO PDF if unavailable |
+| Skipping Playwright install verification | PDF generation silently fails if Playwright/Chromium not installed | Run `npx playwright --version` check in Step 5b; print clear install instructions if missing |
 | Assuming gloss_first parentheticals pass number regex unchanged | Korean glosses like `AUC(모델 성능 지표, 1.0이 최고)` introduce `1.0` as a false orphaned number in Phase 4 verification | Mask gloss_first parentheticals containing Hangul before Step 2a/2c number extraction |
 | Translating assembled report instead of individual tiers | Assembled report loses tier structure during translation; gloss_first and term_policy formatting differ by tier | Phase 3.5 translates individual tier files — never translate the assembled `F{NNN}_report.md` |
 | Running designer agent twice (once per language HTML) | 2x API cost for negligible gain — CSS rules are 95% language-agnostic | Run designer ONCE on EN HTML; inject shared CSS into both; append KO typography addendum to KO only |

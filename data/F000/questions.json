@@ -1,0 +1,22 @@
+[
+  {
+    "id": "q1",
+    "question": "XGBoost가 Random Forest보다 예측 정확도가 높은가?",
+    "experiments": ["e001", "e002"]
+  },
+  {
+    "id": "q2",
+    "question": "Nested CV가 data leakage를 효과적으로 방지하는가?",
+    "experiments": ["e003"]
+  },
+  {
+    "id": "q3",
+    "question": "Feature selection이 모델 일반화 성능을 향상시키는가?",
+    "experiments": ["e002", "e003"]
+  },
+  {
+    "id": "q4",
+    "question": "Y-randomization null distribution은 모델 유효성을 검증하는가?",
+    "experiments": ["e003"]
+  }
+]

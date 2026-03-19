@@ -1,5 +1,5 @@
 version: 3
-updated: "2026-03-18T13:10:00Z"
+updated: "2026-03-18T17:00:00Z"
 scan_paths:
   - outputs/
 foundations: {}
@@ -41,3 +41,35 @@ experiments:
     issue: 23
     path: outputs/e005/
     findings: "영어 대비 37.5% 감소 (1/1.6 ratio). Tier0:12어절/2b, Tier1:22어절/3b, Tier2:28어절/3b, Tier3:37어절/4b. CJK CSS: line-height 1.75, word-break keep-all, font-size 1.05em, letter-spacing -0.02em."
+  e006:
+    description: "Tier 2→1 Down-distillation + Density Overflow Rule"
+    status: final
+    issue: 24
+    path: outputs/e006/
+    depends_on: [e003]
+    milestone: "v1.17.0 - HTML Slide Generation"
+    findings: "Density Overflow Rule 섹션 추가 (초과→speaker notes 이동). Results Rule 4에 Tier 2→Tier 1 register 압축 규칙 추가 (≤35w/≤3b). Speaker notes에 원본 Tier 2 전문 보존."
+  e007:
+    description: "SectionTransition 패턴 + Narrative Thread 인라인"
+    status: final
+    issue: 25
+    path: outputs/e007/
+    depends_on: [e003]
+    milestone: "v1.17.0 - HTML Slide Generation"
+    findings: "7번째 패턴 SectionTransition 추가 (accent gradient bg). Auto-insert: Results 3연속 후 + pre-Conclusion 강제. Narrative Thread: hook_question/takeaway 추출→Motivation/Conclusion 강제 삽입."
+  e008:
+    description: "Citation 규칙 + figcaption 템플릿"
+    status: final
+    issue: 26
+    path: outputs/e008/
+    depends_on: [e003]
+    milestone: "v1.17.0 - HTML Slide Generation"
+    findings: "bare <img>→<figure>/<figcaption> 교체. Caption 포맷: '{exp_id}: {stem} | Source: {exp_description}'. Phase 0에서 caption 자동 생성 규칙 추가. figcaption CSS 추가."
+  e009:
+    description: "Phase 3 Critique 확장 + Verification Checklist 정비"
+    status: final
+    issue: 27
+    path: outputs/e009/
+    depends_on: [e006, e007, e008]
+    milestone: "v1.17.0 - HTML Slide Generation"
+    findings: "Phase 3 critique에 NARRATIVE_ARC/CONTENT_REGISTER/CITATION_PRESENCE 3개 차원 추가. Verification checklist에 콘텐츠 품질 5개 항목 추가. 별도 Phase 대신 기존 Phase 3에 흡수."
