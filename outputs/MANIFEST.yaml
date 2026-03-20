@@ -1,12 +1,14 @@
 version: 3
-updated: "2026-03-18T17:00:00Z"
+updated: "2026-03-19T10:55:00Z"
 scan_paths:
   - outputs/
 foundations: {}
 milestone:
-  name: "v1.17.0 - HTML Slide Generation"
-  description: "reveal.js 기반 HTML 슬라이드 보고서 시스템 추가"
+  name: "v1.18.0 - HTML Slide Generation + Playwright PDF"
+  description: "reveal.js 기반 HTML 슬라이드 보고서 시스템 추가 + PyMuPDF→Playwright headless PDF 전환"
   started: "2026-03-18"
+  completed: "2026-03-19"
+  status: closed
 experiments:
   e001:
     description: "아키텍처 결정 - Phase 9 vs /exp-report:slides 별도 skill"
