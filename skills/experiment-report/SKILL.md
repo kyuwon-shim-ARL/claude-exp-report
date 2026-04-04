@@ -200,20 +200,26 @@ bundle / share deliverables
 
 ### Phase 1: Question Discovery (hybrid)
 
-**Auto-derive candidate questions from MANIFEST metadata:**
+**Auto-derive candidate questions from MANIFEST metadata (Conclusion-Forward Pyramid):**
 
-Cluster the `description` and `findings` fields of all final experiments into 4-8 candidate questions using these heuristic categories:
+Questions are derived from **conclusions (findings)**, not experiment descriptions. The goal is a pyramid structure where the top-level claim sits at the apex, supported by mechanism and boundary evidence below.
 
-| Arc Position | Category | Heuristic | Example Question |
-|-------------|----------|-----------|------------------|
-| **Claim** | Pipeline validation | Experiments with accuracy/performance metrics | "Does the pipeline work?" |
-| **Claim** | Reliability & rigor | Experiments with CI, bootstrap, power analysis, sample size | "How reliable are the headline results?" |
-| **Mechanism** | Mechanism / causality | Experiments with correlation/mediation analysis | "Why does it work?" |
-| **Mechanism** | Domain decomposition | Experiments with sub-class/sub-target analysis | "Are classes internally coherent?" |
-| **Boundary** | Negative results / failures | Experiments with poor metrics, failed approaches, or deprecated status | "What approaches failed and why?" |
-| **Boundary** | Scalability / generalization | Experiments with cross-condition validation | "Does it generalize?" |
-| **Practical** | Methodology comparison | Experiments comparing approaches (vs, comparison) | "Which method is best?" |
-| **Practical** | Quantitative relationship | Experiments with continuous variable analysis (concentration, dose, time) | "Does the quantitative factor matter?" |
+**Step 1 — Extract conclusion claims:**
+From each final experiment's `findings` field (fallback: `description`), extract the core claim or conclusion as a one-sentence assertion. Group semantically similar claims together.
+
+**Step 2 — Build conclusion pyramid:**
+Cluster the extracted claims into 4-6 questions using this pyramid hierarchy:
+
+| Arc Position | Focus | Derivation Source | Example Question |
+|-------------|-------|-------------------|------------------|
+| **Claim** | What was achieved? (headline result) | Strongest `findings` with performance metrics | "Does 5-class classification work at practical accuracy?" |
+| **Mechanism** | What drives the result? | `findings` with feature importance, causality, interpretability | "What molecular features determine class separation?" |
+| **Mechanism** | How do we trust the interpretation? | `findings` with validation, cross-method convergence, statistical rigor | "How reliable is the interpretability evidence?" |
+| **Boundary** | What are the limits and next steps? | `findings` with negative results, caveats, failed approaches | "What are the current limitations and what is needed next?" |
+| **Practical** | Is the methodology comprehensive? | `findings` comparing methods, SOTA benchmarks | "How does our approach compare to state-of-the-art?" |
+
+**Step 3 — Assign experiments as evidence (not as question drivers):**
+Each experiment is assigned as **supporting evidence** to the question whose conclusion it supports. An experiment may support multiple questions from different angles. Trial-and-error experiments and negative results are absorbed into Boundary or as counter-evidence under the relevant Claim/Mechanism question — they do NOT form standalone questions unless they represent a major independent finding.
 
 Categories in the same **Arc Position** should be merged into a single question when possible. The Arc column maps to the hierarchical ordering in Check 2 below.
 
@@ -221,9 +227,9 @@ Categories in the same **Arc Position** should be merged into a single question 
 
 After deriving candidate questions, run these 4 checks. Fix violations before presenting.
 
-**Check 1 — MECE (Mutually Exclusive, Collectively Exhaustive)**
-- **Mutual exclusivity**: If two questions share >50% of their assigned experiments *in either question* AND address the same aspect (e.g., both about "reliability"), merge them. An experiment may appear in multiple questions only if each question examines a **different aspect** of that experiment (e.g., Q1 uses E014's accuracy, Q4 uses E014's weighting effect). When this happens, annotate the aspect: `E014 (accuracy)` vs `E014 (weighting)`.
-- **Exhaustiveness**: Every `status: final` experiment must be assigned to at least one question. If any experiment is unassigned, either create a new question or expand an existing one to include it. List unassigned experiments explicitly and resolve before proceeding.
+**Check 1 — Conclusion-MECE (Mutually Exclusive conclusions, Collectively Exhaustive evidence)**
+- **Mutual exclusivity**: If two questions address the same conclusion from the same angle, merge them. Questions may share experiments as evidence only if each question uses the experiment to support a **different conclusion** (e.g., Q1 cites E014 for performance, Q3 cites E014 for interpretability validation). Annotate the aspect: `E014 (performance)` vs `E014 (validation)`.
+- **Evidence exhaustiveness**: Every `status: final` experiment must be **cited as evidence** in at least one question. This is softer than question-assignment — an experiment cited as supporting/counter evidence counts. If any experiment is uncited, either expand an existing question's evidence base or absorb it into the Boundary question. List uncited experiments explicitly and resolve before proceeding. **Do NOT create new questions solely to accommodate uncited experiments** — prefer absorbing them as evidence into existing questions.
 
 **Check 2 — Hierarchical Ordering (Narrative Arc)**
 Questions must follow a logical progression, not a flat list. Use this universal ordering framework:
@@ -259,7 +265,7 @@ Verify that answering ALL questions produces a coherent final conclusion. Draft 
 **Check 4 — Question Count**
 - Target: 4-6 questions. Fewer than 4 suggests over-merging. More than 6 suggests insufficient abstraction.
 - If >6 after heuristic derivation, look for questions that are sub-aspects of a broader question and merge them.
-- **Priority rule**: If an outlier experiment fits no existing question, exhaustiveness (Check 1) takes priority over count target. Create the extra question rather than leaving experiments unassigned. Annotate it as "Auxiliary" in the arc.
+- **Priority rule**: If an outlier experiment cannot be cited as evidence in any existing question, absorb it into the Boundary question as supplementary evidence rather than creating a new question. Only create an extra "Auxiliary" question if the experiment represents a genuinely independent conclusion that doesn't fit any existing arc position.
 
 **Present validated questions to the user:**
 - Print the questions as a numbered list **with the narrative arc label** (Claim / Mechanism / Boundary / Practical)
@@ -1489,7 +1495,8 @@ Cross-language:    {pass/fail} — {number reconciliation details}
 | Figure numbering mismatches across tiers | Tier 2 says "Figure 3" but Tier 3 gallery has different numbering | Use consistent figure IDs tied to experiment IDs (e.g., "E005-Fig1") |
 | Using stale MANIFEST data | MANIFEST may have changed since last read | Re-read MANIFEST at Phase 0 start; do not cache across sessions |
 | Flat question list without hierarchy (including siloing statistical rigor as standalone) | Readers see no logical progression; a standalone "adequately powered?" question retroactively undermines all prior claims | Order as narrative arc: Claim→Mechanism→Boundary→Practical; integrate CI/power into claim or practical question |
-| Unassigned experiments | Experiments missing from all questions produce incomplete synthesis | Check exhaustiveness: every final experiment in at least one question |
+| Uncited experiments | Experiments missing from all questions produce incomplete synthesis | Check evidence exhaustiveness: every final experiment cited as evidence in at least one question |
+| Experiment-driven questions | Questions organized around what was done (trial-and-error) rather than what was learned (conclusions) | Derive questions from findings/conclusions, not experiment descriptions; experiments are evidence, not question drivers |
 | Stopping after Phase 4 (MD only) | User gets raw Markdown without HTML/PDF — defeats the plugin purpose | Phase 4 is complete ONLY when Phase 5 has executed and HTML exists on disk |
 | Designer agent rewriting full HTML | Base64-encoded images get silently corrupted by line truncation | Use CSS-extraction pattern: agent outputs `<style>` block only |
 | Embedding large Base64 images without size guard | Reports with 20+ experiments produce >10MB HTML that degrades browser performance | If total figure registry exceeds 10MB, warn the user and consider linking external images instead of embedding |
