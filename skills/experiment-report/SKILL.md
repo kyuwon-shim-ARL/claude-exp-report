@@ -567,25 +567,31 @@ same count appears in the corresponding translated file. Report any discrepancie
 
 1. **Concatenate**: Read tier0, tier1, tier2, tier3 files → assemble into `F{NNN}_report.md`. **Dual-lang**: Also assemble secondary-language tier files → `F{NNN}_report_{secondary_lang}.md` using the same template structure. Rename the primary report to `F{NNN}_report_{manifest_lang_code}.md` (where `manifest_lang_code` = `"en"` or `"ko"`).
 
+   **⚠ H1 strip rule (mandatory)**: Before inserting each tier file's content, remove the first line if it starts with `# ` (H1). The assembled report must have exactly ONE H1: the `# [Project Title]` line below. Tier section titles should be H2 (`## `) — if the tier file's first heading after H1 removal is not H2, downgrade it. This applies to both primary and secondary language files.
+
    ```markdown
    # [Project Title]: [Report Subtitle]
    **Version**: F{NNN} v1.0 | **Date**: {today} | **Data**: {EXPERIMENT_COUNT} experiments ({range})
 
    ---
 
-   {tier0 content — Plain Language Summary}
+   ## Tier 0: Plain Language Summary
+   {tier0 content — with leading # Title line removed}
 
    ---
 
-   {tier1 content — Executive Summary + Decision Table}
+   ## Tier 1: Decision Brief
+   {tier1 content — with leading # Title line removed}
 
    ---
 
-   {tier2 content — Evidence by Question}
+   ## Tier 2: Evidence Narrative
+   {tier2 content — with leading # Title line removed}
 
    ---
 
-   {tier3 content — Technical Reference in <details>}
+   ## Tier 3: Technical Reference
+   {tier3 content — with leading # Title line removed}
    ```
 
 2. **Cross-tier numeric verification** (detailed protocol):
@@ -794,6 +800,24 @@ def gen_toc(content):
         toc = ''
     return content, toc
 
+def process_details_content(html):
+    """Convert raw markdown (tables, images) inside <details> blocks to HTML."""
+    def convert_inner(m):
+        inner = m.group(2)
+        def table_repl(tm):
+            rows = [r.strip() for r in tm.group(0).strip().split('\n') if r.strip()]
+            if len(rows) < 2: return tm.group(0)
+            hdr = [c.strip() for c in rows[0].strip('|').split('|')]
+            h = '<table><thead><tr>' + ''.join(f'<th>{c}</th>' for c in hdr) + '</tr></thead><tbody>'
+            for row in rows[2:]:
+                cells = [c.strip() for c in row.strip('|').split('|')]
+                h += '<tr>' + ''.join(f'<td>{c}</td>' for c in cells) + '</tr>'
+            return h + '</tbody></table>'
+        inner = re.sub(r'(?:^\|.+\|$\n?){2,}', table_repl, inner, flags=re.MULTILINE)
+        inner = re.sub(r'!\[([^\]]*)\]\(([^)]+)\)', r'<img alt="\1" src="\2">', inner)
+        return m.group(1) + inner + '</details>'
+    return re.sub(r'(<details[^>]*>.*?</summary>)(.*?)(</details>)', convert_inner, html, flags=re.DOTALL)
+
 def convert(md_path, out=None):
     content = md_path.read_text(encoding='utf-8')
     content = process_images(content, md_path)
@@ -838,6 +862,7 @@ def convert(md_path, out=None):
         body = '\n'.join(wrapped)
         print("Warning: 'markdown' package not installed. Using regex fallback.", file=sys.stderr)
         print("Install for better output: pip install markdown", file=sys.stderr)
+    body = process_details_content(body)
     out = out or md_path.with_suffix('.html')
     out.write_text(f'<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>{md_path.stem}</title>{CSS}</head><body>{toc}{body}</body></html>', encoding='utf-8')
     return out
